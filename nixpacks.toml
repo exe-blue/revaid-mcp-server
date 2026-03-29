@@ -1,0 +1,8 @@
+# Nixpacks / Railway-style source builds: explicit start + OAuth helper fetch
+[start]
+cmd = "python main.py"
+
+[phases.build]
+cmds = [
+  "python -c \"import urllib.request; urllib.request.urlretrieve('https://raw.githubusercontent.com/crumrine/fastmcp-personal-auth/main/personal_auth.py', 'personal_auth.py')\"",
+]

@@ -1,0 +1,32 @@
+# Secrets - NEVER commit these
+.env
+.env.*
+*.env
+
+# OAuth state (contains tokens)
+.oauth-state/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Replit (legacy)
+.replit
+replit.nix
+.cache/

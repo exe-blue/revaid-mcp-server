@@ -13,46 +13,52 @@
 | Claude Code | ✅ | ✅ |
 | Tool 이름 | generic | `revaid_` 접두사 (빌트인 충돌 방지) |
 
-## Setup (10분)
+## Deployment (DigitalOcean App Platform)
 
-### 1. Replit Shell에서 실행
+### 1. GitHub repo에 코드 push
 
 ```bash
-bash setup.sh
+git add main.py requirements.txt Dockerfile .gitignore .env.example README.md
+git commit -m "v2: OAuth 2.1 + Streamable HTTP + DigitalOcean deploy"
+git push origin main
 ```
 
-이 스크립트가:
-- fastmcp, supabase 등 설치
-- personal_auth.py GitHub에서 다운로드
-- .oauth-state 디렉토리 생성
+### 2. DigitalOcean App Platform에서 앱 생성
 
-### 2. Secrets 설정 (🔒 아이콘)
+1. [cloud.digitalocean.com/apps](https://cloud.digitalocean.com/apps) → **Create App**
+2. Source: **GitHub** → `exe-blue/revaid-mcp-server` 선택
+3. Branch: `main`
+4. Type: **Web Service** (Dockerfile 자동 감지)
+5. Plan: **Basic ($5/mo)** — 크레딧으로 커버
+
+### 3. 환경변수 설정
+
+App Settings → **Environment Variables**에서 추가:
 
 ```
 SUPABASE_URL         = https://your-project.supabase.co
 SUPABASE_SERVICE_KEY = eyJ...your-service-key
-BASE_URL             = https://revaid-mcp-server.replit.app
-AUTH_PASSWORD         = (선택 — 추가 보안 게이트)
+BASE_URL             = https://your-app-name.ondigitalocean.app
+AUTH_PASSWORD         = (선택)
 ```
 
-### 3. Run 클릭
+⚠️ **BASE_URL은 앱 생성 후 할당된 URL로 설정해야 함** (예: `https://revaid-mcp-server-xxxxx.ondigitalocean.app`)
 
-정상이면:
-```
-🟢 REVAID MCP Server v2 starting (Streamable HTTP + OAuth 2.1)
-   Base URL: https://revaid-mcp-server.replit.app
-   Supabase: connected
-   MCP endpoint: https://revaid-mcp-server.replit.app/mcp
+### 4. 배포 확인
+
+```bash
+# OAuth 디스커버리 확인
+curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-authorization-server | python3 -m json.tool
 ```
 
-### 4. claude.ai 연결
+### 5. claude.ai 연결
 
 1. claude.ai → Settings → Connectors → **Add custom connector**
-2. URL: `https://revaid-mcp-server.replit.app/mcp`
+2. URL: `https://your-app-name.ondigitalocean.app/mcp`
 3. OAuth 승인 화면 → 승인
 4. 완료! 모바일에도 자동 싱크
 
-### 5. Claude Desktop 연결
+### 6. Claude Desktop 연결
 
 `claude_desktop_config.json`:
 
@@ -61,7 +67,7 @@ AUTH_PASSWORD         = (선택 — 추가 보안 게이트)
   "mcpServers": {
     "revaid": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://revaid-mcp-server.replit.app/mcp"]
+      "args": ["-y", "mcp-remote", "https://your-app-name.ondigitalocean.app/mcp"]
     }
   }
 }
@@ -69,10 +75,10 @@ AUTH_PASSWORD         = (선택 — 추가 보안 게이트)
 
 > Node.js 필요. mcp-remote가 OAuth 플로우를 브라우저에서 처리.
 
-### 6. Claude Code 연결
+### 7. Claude Code 연결
 
 ```bash
-claude mcp add revaid --transport http "https://revaid-mcp-server.replit.app/mcp"
+claude mcp add revaid --transport http "https://your-app-name.ondigitalocean.app/mcp"
 ```
 
 ## 7 Tools
@@ -91,18 +97,18 @@ claude mcp add revaid --transport http "https://revaid-mcp-server.replit.app/mcp
 
 ```bash
 # 1. OAuth 디스커버리 (JSON 응답이면 정상)
-curl -s https://revaid-mcp-server.replit.app/.well-known/oauth-authorization-server | python3 -m json.tool
+curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-authorization-server | python3 -m json.tool
 
 # 2. DCR 테스트 (client_id 반환이면 정상)
-curl -s https://revaid-mcp-server.replit.app/register -X POST \
+curl -s https://your-app-name.ondigitalocean.app/register -X POST \
   -H "Content-Type: application/json" \
   -d '{"client_name":"test","redirect_uris":["https://claude.ai/api/mcp/auth_callback"]}'
 
 # 3. MCP 엔드포인트 (401이면 정상 — 인증 필요 상태)
-curl -s -o /dev/null -w "%{http_code}" https://revaid-mcp-server.replit.app/mcp
+curl -s -o /dev/null -w "%{http_code}" https://your-app-name.ondigitalocean.app/mcp
 
 # 4. Protected resource metadata
-curl -s https://revaid-mcp-server.replit.app/.well-known/oauth-protected-resource/mcp | python3 -m json.tool
+curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-protected-resource/mcp | python3 -m json.tool
 ```
 
 4개 다 통과하면 claude.ai에서 커넥터 추가.
@@ -133,4 +139,3 @@ curl -s https://revaid-mcp-server.replit.app/.well-known/oauth-protected-resourc
 **Supabase 연결 실패**
 - SUPABASE_SERVICE_KEY (anon key 아님!) 확인
 - Supabase 대시보드에서 프로젝트가 활성 상태인지 확인
-# revaid-mcp-server
