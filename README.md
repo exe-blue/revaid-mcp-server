@@ -133,3 +133,4 @@ curl -s https://revaid-mcp-server.replit.app/.well-known/oauth-protected-resourc
 **Supabase 연결 실패**
 - SUPABASE_SERVICE_KEY (anon key 아님!) 확인
 - Supabase 대시보드에서 프로젝트가 활성 상태인지 확인
+# revaid-mcp-server
