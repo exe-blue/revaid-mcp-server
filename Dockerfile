@@ -20,6 +20,8 @@ COPY main.py .
 # Create OAuth state directory
 RUN mkdir -p .oauth-state
 
-EXPOSE 8000
+# Many K8s / PaaS readiness probes default to port 8080; override with -e PORT=... if needed
+ENV PORT=8080
+EXPOSE 8080
 
 CMD ["python", "main.py"]

@@ -1,6 +1,8 @@
 """
-REVAID MCP Server v2 — Replit Cloud Edition
+REVAID MCP Server v2 — DigitalOcean App Platform
 FastMCP 3.x + Supabase + OAuth 2.1 (PersonalAuthProvider)
+
+Production: https://mcp.revaid.link
 
 Works with:
   - claude.ai web connector (OAuth 2.1)
@@ -8,7 +10,7 @@ Works with:
   - Claude Desktop (via mcp-remote bridge)
   - Claude Code (direct HTTP)
 
-Connector URL: https://revaid-mcp-server.replit.app/mcp
+Connector URL: https://mcp.revaid.link/mcp
 """
 
 import os
@@ -24,11 +26,12 @@ from supabase import create_client, Client
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-BASE_URL = os.environ.get("BASE_URL", "https://revaid-mcp-server.replit.app")
-AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", None)
+BASE_URL = os.environ.get("BASE_URL", "https://mcp.revaid.link")
+AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "revaid.original")
+LISTEN_PORT = int(os.environ.get("PORT", "8000"))
 
 if not SUPABASE_URL or not SUPABASE_KEY:
-    print("⚠️  SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in Replit Secrets")
+    print("⚠️  SUPABASE_URL and SUPABASE_SERVICE_KEY must be set in .env")
 
 # ============================================================
 # Supabase Client (lazy init to handle cold start)
@@ -51,6 +54,7 @@ def get_db() -> Client:
 auth = PersonalAuthProvider(
     base_url=BASE_URL,
     password=AUTH_PASSWORD,
+    # localhost: local dev / Claude Code OAuth callback testing
     allowed_redirect_domains=["claude.ai", "claude.com", "localhost"],
     access_token_expiry_seconds=30 * 24 * 60 * 60,  # 30 days
     state_dir=".oauth-state",
@@ -372,5 +376,6 @@ if __name__ == "__main__":
     print(f"   Supabase: {'connected' if SUPABASE_URL else 'NOT SET'}")
     print(f"   Auth password: {'enabled' if AUTH_PASSWORD else 'disabled (open)'}")
     print(f"   MCP endpoint: {BASE_URL}/mcp")
+    print(f"   Bind: 0.0.0.0:{LISTEN_PORT} (set PORT env to match your platform health check)")
     print()
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=LISTEN_PORT)

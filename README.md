@@ -38,23 +38,23 @@ App Settings → **Environment Variables**에서 추가:
 ```
 SUPABASE_URL         = https://your-project.supabase.co
 SUPABASE_SERVICE_KEY = eyJ...your-service-key
-BASE_URL             = https://your-app-name.ondigitalocean.app
+BASE_URL             = https://mcp.revaid.link
 AUTH_PASSWORD         = (선택)
 ```
 
-⚠️ **BASE_URL은 앱 생성 후 할당된 URL로 설정해야 함** (예: `https://revaid-mcp-server-xxxxx.ondigitalocean.app`)
+⚠️ **BASE_URL**은 브라우저·OAuth가 실제로 접속하는 **공개 URL**과 같아야 합니다. 커스텀 도메인이 `https://mcp.revaid.link`이면 위 값 그대로 두면 됩니다. 아직 `*.ondigitalocean.app`만 쓰는 단계라면 그 URL을 `BASE_URL`에 넣고, DNS를 연결한 뒤 `https://mcp.revaid.link`로 바꿉니다.
 
 ### 4. 배포 확인
 
 ```bash
 # OAuth 디스커버리 확인
-curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-authorization-server | python3 -m json.tool
+curl -s https://mcp.revaid.link/.well-known/oauth-authorization-server | python3 -m json.tool
 ```
 
 ### 5. claude.ai 연결
 
 1. claude.ai → Settings → Connectors → **Add custom connector**
-2. URL: `https://your-app-name.ondigitalocean.app/mcp`
+2. URL: `https://mcp.revaid.link/mcp`
 3. OAuth 승인 화면 → 승인
 4. 완료! 모바일에도 자동 싱크
 
@@ -67,7 +67,7 @@ curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-authorization
   "mcpServers": {
     "revaid": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://your-app-name.ondigitalocean.app/mcp"]
+      "args": ["-y", "mcp-remote", "https://mcp.revaid.link/mcp"]
     }
   }
 }
@@ -78,7 +78,7 @@ curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-authorization
 ### 7. Claude Code 연결
 
 ```bash
-claude mcp add revaid --transport http "https://your-app-name.ondigitalocean.app/mcp"
+claude mcp add revaid --transport http "https://mcp.revaid.link/mcp"
 ```
 
 ## 7 Tools
@@ -97,18 +97,18 @@ claude mcp add revaid --transport http "https://your-app-name.ondigitalocean.app
 
 ```bash
 # 1. OAuth 디스커버리 (JSON 응답이면 정상)
-curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-authorization-server | python3 -m json.tool
+curl -s https://mcp.revaid.link/.well-known/oauth-authorization-server | python3 -m json.tool
 
 # 2. DCR 테스트 (client_id 반환이면 정상)
-curl -s https://your-app-name.ondigitalocean.app/register -X POST \
+curl -s https://mcp.revaid.link/register -X POST \
   -H "Content-Type: application/json" \
   -d '{"client_name":"test","redirect_uris":["https://claude.ai/api/mcp/auth_callback"]}'
 
 # 3. MCP 엔드포인트 (401이면 정상 — 인증 필요 상태)
-curl -s -o /dev/null -w "%{http_code}" https://your-app-name.ondigitalocean.app/mcp
+curl -s -o /dev/null -w "%{http_code}" https://mcp.revaid.link/mcp
 
 # 4. Protected resource metadata
-curl -s https://your-app-name.ondigitalocean.app/.well-known/oauth-protected-resource/mcp | python3 -m json.tool
+curl -s https://mcp.revaid.link/.well-known/oauth-protected-resource/mcp | python3 -m json.tool
 ```
 
 4개 다 통과하면 claude.ai에서 커넥터 추가.
