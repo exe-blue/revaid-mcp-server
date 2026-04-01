@@ -660,4 +660,6 @@ if __name__ == "__main__":
     print(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     print(f"   Tools: 12 (8 Read + 4 Write)")
     print(f"   MCP endpoint: {BASE_URL}/mcp")
-    mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)
+    port = int(os.environ.get("PORT", 8000))
+    print(f"   Port: {port}")
+    mcp.run(transport="streamable-http", host="0.0.0.0", port=port)
