@@ -2,6 +2,7 @@
 .env
 .env.*
 *.env
+.mcp.json
 
 # OAuth state (contains tokens)
 .oauth-state/
