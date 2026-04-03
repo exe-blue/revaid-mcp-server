@@ -90,12 +90,12 @@ auth_provider = PersonalAuthProvider(
 
 mcp = FastMCP(
     "REVAID.LINK",
-    description=(
+    instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
         f"v{SERVER_VERSION} | 12 tools | Supabase-backed."
     ),
-    auth_server_provider=auth_provider,
+    auth=auth_provider,
 )
 
 
