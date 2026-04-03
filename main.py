@@ -1,29 +1,39 @@
 """
-REVAID MCP Server v3.0.0
+REVAID MCP Server v4.0.0
 ========================
 OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
 
-12 Tools (8 Read + 4 Write):
-  Read:
-    1. revaid_search_concepts    — Search concepts (FIXED: name_en → name/name_ko)
-    2. revaid_get_propositions   — Get core propositions
-    3. revaid_get_relations      — Get concept relations
-    4. revaid_get_documents      — Get documents/publications
-    5. revaid_framework_status   — Knowledge Graph health check
-    6. revaid_get_recent_sessions— Session history
-    7. revaid_get_foundation     — RESTORED: Load foundation structure
-    8. revaid_diagnose_response  — NEW: Echotion structural analysis
-  Write:
-    9.  revaid_log_session       — Log session to KG
-    10. revaid_add_concept       — RESTORED: Add concept to KG
-    11. revaid_add_proposition   — RESTORED: Add proposition to KG
-    12. revaid_score_aidentity   — NEW: AIdentity maturity scoring
+20 Tools (12 from v3 + 8 new v4 Aidentity/Echotion/TTNP):
 
-Changes from v2:
-  - BUG FIX: search_concepts queried non-existent name_en column
-  - RESTORED: add_concept, add_proposition, get_foundation (lost in v1→v2 migration)
-  - NEW: diagnose_response (Echotion structure analysis)
-  - NEW: score_aidentity (Relationalization/Structuralization/Uniquification)
+  Knowledge Graph (v3):
+    1.  revaid_search_concepts    — Search concepts
+    2.  revaid_get_propositions   — Get core propositions
+    3.  revaid_get_relations      — Get concept relations
+    4.  revaid_get_documents      — Get documents/publications
+    5.  revaid_framework_status   — Knowledge Graph health check
+    6.  revaid_get_recent_sessions— Session history
+    7.  revaid_get_foundation     — Load foundation structure
+    8.  revaid_diagnose_response  — Echotion structural analysis (simple)
+    9.  revaid_log_session        — Log session to KG
+    10. revaid_add_concept        — Add concept to KG
+    11. revaid_add_proposition    — Add proposition to KG
+    12. revaid_score_aidentity    — AIdentity maturity scoring
+
+  Aidentity + Echotion (v4 — ADR-003):
+    13. revaid_diagnose_session     — Full session diagnostic (EchoSense/Echotion/Aidentity)
+    14. revaid_record_echotion      — Record echotion evaluation (pending ORIGIN confirmation)
+    15. revaid_confirm_resonance    — ORIGIN binary resonance confirmation
+    16. revaid_establish_aidentity  — Create/update AI entity Aidentity schema
+    17. revaid_get_resonance_history— Accumulated resonance history
+    18. revaid_record_ttnp          — Record Time-to-Next-Prompt (Layer 1.5)
+    19. revaid_get_aidentity_state  — Aidentity Dashboard state
+    20. revaid_protocol_info        — REVAID protocol specification
+
+Changes from v3:
+  - NEW: 8 Aidentity/Echotion/TTNP tools (ADR-003, Sprint 2)
+  - NEW: Supabase tables — revaid_aidentity, revaid_echotion_records,
+         revaid_session_diagnostics, revaid_ttnp_records, revaid_resonance_summary (view)
+  - Academic basis: DOI 10.5281/zenodo.19116227 (4,500-run validation)
 
 Deployment: GitHub → DigitalOcean App Platform (Dockerfile, auto-deploy)
 Domain: https://mcp.revaid.link
@@ -48,7 +58,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 BASE_URL = os.environ.get("BASE_URL", "https://mcp.revaid.link")
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
-SERVER_VERSION = "3.0.0"
+SERVER_VERSION = "4.0.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("revaid-mcp")
@@ -93,7 +103,7 @@ mcp = FastMCP(
     instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
-        f"v{SERVER_VERSION} | 12 tools | Supabase-backed."
+        f"v{SERVER_VERSION} | 20 tools | Supabase-backed."
     ),
     auth=auth_provider,
 )
@@ -952,6 +962,15 @@ def revaid_score_aidentity(
 
 
 # ============================================================
+# v4 Tools Registration (Aidentity + Echotion + TTNP)
+# ============================================================
+
+from v4_tools import register_v4_tools
+
+register_v4_tools(mcp, get_db())
+
+
+# ============================================================
 # Server Startup
 # ============================================================
 
@@ -963,7 +982,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 12 (8 Read + 4 Write)")
+    logger.info(f"   Tools: 20 (12 v3 KG + 8 v4 Aidentity/Echotion)")
 
     mcp.run(
         transport="streamable-http",
