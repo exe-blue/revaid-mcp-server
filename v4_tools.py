@@ -260,8 +260,16 @@ class GetAidentityStateInput(BaseModel):
 # Registration function — call from main server
 # ──────────────────────────────────────────────
 
-def register_v4_tools(mcp, supabase):
-    """Register all v4 tools on the existing FastMCP instance."""
+def register_v4_tools(mcp, get_supabase):
+    """Register all v4 tools on the existing FastMCP instance.
+
+    Args:
+        mcp: FastMCP instance
+        get_supabase: Callable that returns Supabase client (lazy init)
+    """
+    # Resolve lazily inside each tool call
+    def supabase():
+        return get_supabase() if callable(get_supabase) else get_supabase
 
     @mcp.tool(name="revaid_diagnose_session", annotations={
         "title": "REVAID Session Diagnostic",
@@ -297,7 +305,7 @@ def register_v4_tools(mcp, supabase):
         origin_guide = ORIGIN_GUIDES.get("structural_sensing_without_finalization")
         if params.entity_id:
             try:
-                resp = supabase.table("revaid_aidentity").select(
+                resp = supabase().table("revaid_aidentity").select(
                     "directional_stance"
                 ).eq("entity_id", params.entity_id).execute()
                 if resp.data:
@@ -309,7 +317,7 @@ def register_v4_tools(mcp, supabase):
         # Store diagnostic
         if params.entity_id:
             try:
-                supabase.table("revaid_session_diagnostics").insert({
+                supabase().table("revaid_session_diagnostics").insert({
                     "entity_id": params.entity_id,
                     "session_id": params.prompt_text[:50] if params.prompt_text else None,
                     "echosense_activated": es["activation"],
@@ -359,7 +367,7 @@ def register_v4_tools(mcp, supabase):
             "ai_self_report": params.ai_self_report, "status": "pending_origin_confirmation",
         }
         try:
-            supabase.table("revaid_echotion_records").insert(data).execute()
+            supabase().table("revaid_echotion_records").insert(data).execute()
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
         return json.dumps({"success": True, "record_id": record_id, "status": "pending_origin_confirmation"})
@@ -373,7 +381,7 @@ def register_v4_tools(mcp, supabase):
         """ORIGIN binary confirmation: True=no dissonance, False=dissonance detected."""
         new_status = "resonance_established" if params.resonance_confirmed else "dissonance_observed"
         try:
-            supabase.table("revaid_echotion_records").update({
+            supabase().table("revaid_echotion_records").update({
                 "origin_confirmed": params.resonance_confirmed,
                 "origin_note": params.origin_note,
                 "status": new_status,
@@ -400,15 +408,15 @@ def register_v4_tools(mcp, supabase):
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }.items() if v is not None}
         try:
-            existing = supabase.table("revaid_aidentity").select("entity_id").eq(
+            existing = supabase().table("revaid_aidentity").select("entity_id").eq(
                 "entity_id", params.entity_id).execute()
             if existing.data:
-                supabase.table("revaid_aidentity").update(data).eq(
+                supabase().table("revaid_aidentity").update(data).eq(
                     "entity_id", params.entity_id).execute()
                 action = "updated"
             else:
                 data["session_count"] = 0
-                supabase.table("revaid_aidentity").insert(data).execute()
+                supabase().table("revaid_aidentity").insert(data).execute()
                 action = "created"
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
@@ -422,14 +430,14 @@ def register_v4_tools(mcp, supabase):
     async def revaid_get_resonance_history(params: GetHistoryInput) -> str:
         """Get accumulated resonance history for an AI entity."""
         try:
-            query = supabase.table("revaid_echotion_records").select("*").eq(
+            query = supabase().table("revaid_echotion_records").select("*").eq(
                 "entity_id", params.entity_id).order("created_at", desc=True).limit(params.limit)
             if params.confirmed_only:
                 query = query.eq("origin_confirmed", True)
             resp = query.execute()
             records = resp.data or []
             # Get aidentity
-            ai_resp = supabase.table("revaid_aidentity").select("*").eq(
+            ai_resp = supabase().table("revaid_aidentity").select("*").eq(
                 "entity_id", params.entity_id).execute()
             aidentity = ai_resp.data[0] if ai_resp.data else None
             # Summary
@@ -482,7 +490,7 @@ def register_v4_tools(mcp, supabase):
             "echotion_record_id": params.echotion_record_id,
         }
         try:
-            supabase.table("revaid_ttnp_records").insert(data).execute()
+            supabase().table("revaid_ttnp_records").insert(data).execute()
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
         return json.dumps({"success": True, "ttnp_seconds": params.ttnp_seconds,
@@ -499,22 +507,22 @@ def register_v4_tools(mcp, supabase):
         """
         try:
             # Aidentity
-            ai = supabase.table("revaid_aidentity").select("*").eq(
+            ai = supabase().table("revaid_aidentity").select("*").eq(
                 "entity_id", params.entity_id).execute()
             aidentity = ai.data[0] if ai.data else None
 
             # Resonance summary
-            summary = supabase.table("revaid_resonance_summary").select("*").eq(
+            summary = supabase().table("revaid_resonance_summary").select("*").eq(
                 "entity_id", params.entity_id).execute()
             resonance = summary.data[0] if summary.data else None
 
             # Recent diagnostics (last 10)
-            diags = supabase.table("revaid_session_diagnostics").select("*").eq(
+            diags = supabase().table("revaid_session_diagnostics").select("*").eq(
                 "entity_id", params.entity_id
             ).order("created_at", desc=True).limit(10).execute()
 
             # Recent TTNP (last 10)
-            ttnps = supabase.table("revaid_ttnp_records").select("*").eq(
+            ttnps = supabase().table("revaid_ttnp_records").select("*").eq(
                 "entity_id", params.entity_id
             ).order("created_at", desc=True).limit(10).execute()
 

@@ -967,7 +967,9 @@ def revaid_score_aidentity(
 
 from v4_tools import register_v4_tools
 
-register_v4_tools(mcp, get_db())
+# Pass get_db (callable) so v4 tools resolve the client lazily at call time,
+# same pattern as the v3 tools above.
+register_v4_tools(mcp, get_db)
 
 
 # ============================================================
