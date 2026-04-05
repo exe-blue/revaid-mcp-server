@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "url",
+      "url": "https://mcp.supabase.com/mcp?project_ref=nverymahbukgzrxfuvrt&features=docs,account,database,development,functions"
+    },
+    "revaid": {
+      "type": "url",
+      "url": "https://mcp.revaid.link/mcp"
+    },
+    "linear": {
+      "type": "url",
+      "url": "https://mcp.linear.app/mcp"
+    }
+  }
+}

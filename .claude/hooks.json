@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c \"grep -rn 'SUPABASE_SERVICE_KEY\\|AIX_SUPABASE_KEY' --include='*.py' *.py 2>/dev/null | grep -v 'os.environ\\|os.getenv\\|os.env' | head -5 && echo 'BLOCKED: hardcoded key found' && exit 1 || exit 0\"",
+            "description": "Block hardcoded secrets in Python files"
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c \"echo 'Task completed — HANDOFF.md 업데이트와 Linear 상태 변경을 잊지 마세요'\"",
+            "description": "HANDOFF/Linear reminder"
+          }
+        ]
+      }
+    ]
+  }
+}
