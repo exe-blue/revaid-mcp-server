@@ -28,7 +28,7 @@ logger = logging.getLogger("revaid.bridge")
 # ---------------------------------------------------------------------------
 
 AIX_SUPABASE_URL = os.getenv("AIX_SUPABASE_URL", "")
-AIX_SUPABASE_KEY = os.getenv("AIX_SUPABASE_KEY", "")
+AIX_SUPABASE_KEY = os.getenv("AIX_SUPABASE_SERVICE_KEY", "") or os.getenv("AIX_SUPABASE_KEY", "")
 GITHUB_PAT = os.getenv("GITHUB_PAT", "")
 GITHUB_DEFAULT_OWNER = "exe-blue"  # default org
 
