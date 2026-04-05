@@ -108,7 +108,7 @@ mcp = FastMCP(
     instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
-        f"v{SERVER_VERSION} | 30 tools | Supabase-backed."
+        f"v{SERVER_VERSION} | 35 tools | Supabase-backed."
     ),
     auth=auth_provider,
 )
@@ -972,7 +972,7 @@ def revaid_score_aidentity(
 
 from v4_tools import register_v4_tools
 from revaid_handoff import register_handoff
-from revaid_bridge import register_bridge
+from revaid_bridge import register_bridge_tools
 
 # Pass get_db (callable) so v4/v5 tools resolve the client lazily at call time,
 # same pattern as the v3 tools above.
@@ -980,7 +980,7 @@ register_v4_tools(mcp, get_db)
 register_handoff(mcp, get_db)
 
 # v6 Bridge Tools (AiXSignal Supabase + GitHub access)
-register_bridge(mcp)
+register_bridge_tools(mcp)
 
 
 # ============================================================
@@ -995,7 +995,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 30 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 6 v6 Bridge)")
+    logger.info(f"   Tools: 35 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge)")
 
     mcp.run(
         transport="streamable-http",

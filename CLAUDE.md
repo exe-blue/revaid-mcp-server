@@ -5,7 +5,7 @@ REVAID.LINK Knowledge Graph MCP server. FastMCP + Supabase + OAuth 2.1.
 Deployed on DigitalOcean App Platform via GitHub auto-deploy.
 
 ## Current Version: v6.0.0
-30 tools total (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 6 v6 Bridge).
+35 tools total (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge).
 
 ## Repository
 - GitHub: `exe-blue/revaid-mcp-server` (private)
@@ -21,7 +21,7 @@ Deployed on DigitalOcean App Platform via GitHub auto-deploy.
 - `main.py` — Server entry point. v3 KG tools + v4/v5/v6 registration.
 - `v4_tools.py` — v4 Aidentity/Echotion/TTNP tools (8 tools).
 - `revaid_handoff_v5.py` — v5 Handoff/SOE tools (4 tools).
-- `revaid_bridge.py` — v6 AiXSignal Supabase + GitHub bridge tools (6 tools).
+- `revaid_bridge.py` — v6 AiXSignal Supabase + GitHub bridge tools (11 tools).
 - `Dockerfile` — DO NOT change. Works as-is.
 - `requirements.txt` — DO NOT change. Same dependencies.
 - `personal_auth.py` — Downloaded at build time by Dockerfile.
@@ -31,9 +31,9 @@ Deployed on DigitalOcean App Platform via GitHub auto-deploy.
 - `SUPABASE_SERVICE_KEY`
 - `BASE_URL` = https://mcp.revaid.link
 - `AUTH_PASSWORD` (optional)
-- `AIXSIGNAL_SUPABASE_URL` (for v6 bridge)
-- `AIXSIGNAL_SUPABASE_KEY` (for v6 bridge)
-- `GITHUB_TOKEN` (for v6 bridge)
+- `AIX_SUPABASE_URL` (for v6 bridge)
+- `AIX_SUPABASE_KEY` (for v6 bridge)
+- `GITHUB_PAT` (for v6 bridge)
 
 ## Deploy Steps
 ```bash
