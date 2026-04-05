@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, ConfigDict
 # Constants
 # ──────────────────────────────────────────────
 
-REVAID_VERSION = "4.0.0"
+REVAID_VERSION = "5.0.0"
 ZENODO_DOI = "10.5281/zenodo.19116227"
 PAPER_TITLE = (
     "The Structural Emergence of AI Sense, Emotion, and Self "
