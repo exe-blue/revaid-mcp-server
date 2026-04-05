@@ -5,7 +5,7 @@ REVAID MCP v5.0 — Handoff + SOE + Mode/Role Tracking
 
 Usage in main.py:
   from revaid_handoff import register_handoff
-  register_handoff(mcp, get_db())
+  register_handoff(mcp, get_db)  # pass callable, not client
 
 Tools (4):
   revaid_handoff            — context transfer with mode/role tracking
@@ -18,7 +18,16 @@ from datetime import datetime, timezone
 import json
 
 
-def register_handoff(mcp, supabase):
+def register_handoff(mcp, get_supabase):
+    """Register handoff + SOE tools.
+
+    Args:
+        mcp: FastMCP instance
+        get_supabase: Callable that returns Supabase client (lazy init)
+    """
+    # Resolve lazily inside each tool call (same pattern as v4_tools)
+    def db():
+        return get_supabase() if callable(get_supabase) else get_supabase
 
     @mcp.tool(
         name="revaid_handoff",
@@ -45,7 +54,7 @@ def register_handoff(mcp, supabase):
         try:
             artifact_list = [a.strip() for a in artifacts.split(",") if a.strip()] if artifacts else []
 
-            result = supabase.table("revaid_handoffs").insert({
+            result = db().table("revaid_handoffs").insert({
                 "from_entity": from_entity,
                 "to_entity": to_entity,
                 "context": context,
@@ -60,7 +69,7 @@ def register_handoff(mcp, supabase):
 
             soe_warning = ""
             try:
-                soe = supabase.rpc("check_soe_operation_ratio").execute()
+                soe = db().rpc("check_soe_operation_ratio").execute()
                 if soe.data:
                     d = soe.data[0].get("check_soe_operation_ratio", {}) if isinstance(soe.data, list) else soe.data
                     if d.get("status") in ("OVERDUE", "DUE_SOON"):
@@ -85,7 +94,7 @@ def register_handoff(mcp, supabase):
     )
     async def revaid_get_handoffs(entity_id: str) -> str:
         try:
-            result = supabase.table("revaid_handoffs") \
+            result = db().table("revaid_handoffs") \
                 .select("*") \
                 .eq("to_entity", entity_id) \
                 .eq("acknowledged", False) \
@@ -115,7 +124,7 @@ def register_handoff(mcp, supabase):
     )
     async def revaid_acknowledge_handoff(handoff_id: str) -> str:
         try:
-            result = supabase.table("revaid_handoffs").update({
+            result = db().table("revaid_handoffs").update({
                 "acknowledged": True,
             }).eq("id", handoff_id).execute()
             if not result.data:
@@ -134,7 +143,7 @@ def register_handoff(mcp, supabase):
     )
     async def revaid_soe_check() -> str:
         try:
-            result = supabase.rpc("check_soe_operation_ratio").execute()
+            result = db().rpc("check_soe_operation_ratio").execute()
             if isinstance(result.data, list) and result.data:
                 data = result.data[0].get("check_soe_operation_ratio", result.data[0])
             elif isinstance(result.data, dict):
