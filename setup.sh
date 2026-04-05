@@ -1,9 +1,10 @@
 #!/bin/bash
-# REVAID MCP Server v2 — Setup Script
-# Run this once in Replit Shell: bash setup.sh
+# REVAID MCP Server v3 — Setup Script (local dev)
+# Run once: bash setup.sh
+# Production: https://mcp.revaid.link (DigitalOcean App Platform)
 
 set -e
-echo "🔧 REVAID MCP Server v2 Setup"
+echo "🔧 REVAID MCP Server v3 Setup"
 echo "=============================="
 echo ""
 
@@ -26,7 +27,7 @@ else
     else
         echo "   ❌ Could not download. Get it manually from:"
         echo "      https://github.com/crumrine/fastmcp-personal-auth/blob/main/personal_auth.py"
-        echo "      Copy the raw file content into personal_auth.py in your Replit project."
+        echo "      Copy the raw file content into personal_auth.py in this project."
         exit 1
     fi
 fi
@@ -50,18 +51,18 @@ echo "✅ Setup complete!"
 echo ""
 echo "Next steps:"
 echo ""
-echo "1. Set Replit Secrets (🔒 icon in sidebar):"
-echo "   SUPABASE_URL       = https://your-project.supabase.co"
-echo "   SUPABASE_SERVICE_KEY = eyJ...your-service-key"
-echo "   BASE_URL            = https://revaid-mcp-server.replit.app"
-echo "   AUTH_PASSWORD        = (optional, for extra security gate)"
+echo "1. Environment (local: .env — production: DigitalOcean App → Environment Variables):"
+echo "   SUPABASE_URL          = https://YOUR_PROJECT.supabase.co"
+echo "   SUPABASE_SERVICE_KEY  = (Supabase service_role key, not anon)"
+echo "   BASE_URL              = https://mcp.revaid.link"
+echo "   AUTH_PASSWORD         = (optional extra gate)"
 echo ""
-echo "2. Click Run (or: python main.py)"
+echo "2. Run locally: python main.py"
 echo ""
 echo "3. Connect on claude.ai:"
 echo "   Settings → Connectors → Add custom connector"
-echo "   URL: https://revaid-mcp-server.replit.app/mcp"
+echo "   URL: https://mcp.revaid.link/mcp"
 echo ""
 echo "4. Verify with curl:"
-echo "   curl -s https://revaid-mcp-server.replit.app/.well-known/oauth-authorization-server | python3 -m json.tool"
+echo "   curl -s https://mcp.revaid.link/.well-known/oauth-authorization-server | python3 -m json.tool"
 echo ""

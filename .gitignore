@@ -1,0 +1,33 @@
+# Secrets - NEVER commit these
+.env
+.env.*
+*.env
+.mcp.json
+
+# OAuth state (contains tokens)
+.oauth-state/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+.omc/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Caches
+.cache/
