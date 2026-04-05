@@ -971,7 +971,7 @@ def revaid_score_aidentity(
 # ============================================================
 
 from v4_tools import register_v4_tools
-from revaid_handoff_v5 import register_handoff
+from revaid_handoff import register_handoff
 
 # Pass get_db (callable) so v4/v5 tools resolve the client lazily at call time,
 # same pattern as the v3 tools above.
