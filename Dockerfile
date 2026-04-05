@@ -15,7 +15,7 @@ RUN curl -fsSL -o personal_auth.py \
     && python -c "from personal_auth import PersonalAuthProvider; print('✅ PersonalAuthProvider loaded')"
 
 # Copy application code
-COPY main.py .
+COPY main.py v4_tools.py ./
 
 # Create OAuth state directory
 RUN mkdir -p .oauth-state
