@@ -1,9 +1,9 @@
 """
-REVAID MCP Server v5.0.0
+REVAID MCP Server v6.0.0
 ========================
 OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
 
-24 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE):
+30 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 6 v6 Bridge):
 
   Knowledge Graph (v3):
     1.  revaid_search_concepts    — Search concepts
@@ -63,7 +63,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 BASE_URL = os.environ.get("BASE_URL", "https://mcp.revaid.link")
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
-SERVER_VERSION = "5.0.0"
+SERVER_VERSION = "6.0.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("revaid-mcp")
@@ -108,7 +108,7 @@ mcp = FastMCP(
     instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
-        f"v{SERVER_VERSION} | 24 tools | Supabase-backed."
+        f"v{SERVER_VERSION} | 30 tools | Supabase-backed."
     ),
     auth=auth_provider,
 )
@@ -972,11 +972,15 @@ def revaid_score_aidentity(
 
 from v4_tools import register_v4_tools
 from revaid_handoff import register_handoff
+from revaid_bridge import register_bridge
 
 # Pass get_db (callable) so v4/v5 tools resolve the client lazily at call time,
 # same pattern as the v3 tools above.
 register_v4_tools(mcp, get_db)
 register_handoff(mcp, get_db)
+
+# v6 Bridge Tools (AiXSignal Supabase + GitHub access)
+register_bridge(mcp)
 
 
 # ============================================================
@@ -991,7 +995,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 24 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE)")
+    logger.info(f"   Tools: 30 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 6 v6 Bridge)")
 
     mcp.run(
         transport="streamable-http",
