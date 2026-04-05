@@ -3,7 +3,7 @@ REVAID MCP Server v6.0.0
 ========================
 OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
 
-30 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 6 v6 Bridge):
+35 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge):
 
   Knowledge Graph (v3):
     1.  revaid_search_concepts    — Search concepts

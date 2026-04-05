@@ -14,92 +14,119 @@ Integration:
   Import and call register_bridge_tools(mcp) from your main server file.
 """
 
-import os
+import asyncio
+import base64
 import json
 import logging
+import os
+import re
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 
 logger = logging.getLogger("revaid.bridge")
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-AIX_SUPABASE_URL = os.getenv("AIX_SUPABASE_URL", "")
-AIX_SUPABASE_KEY = os.getenv("AIX_SUPABASE_SERVICE_KEY", "") or os.getenv("AIX_SUPABASE_KEY", "")
-GITHUB_PAT = os.getenv("GITHUB_PAT", "")
-GITHUB_DEFAULT_OWNER = "exe-blue"  # default org
+GITHUB_DEFAULT_OWNER = "exe-blue"
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$")
+
+_DESTRUCTIVE_RE = re.compile(
+    r"\b(DROP|DELETE|TRUNCATE|ALTER|INSERT|UPDATE|CREATE)\b",
+    re.IGNORECASE,
+)
+
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=30)
+    return _http_client
+
+
+def _validate_identifier(name: str, label: str) -> str:
+    if not _IDENT_RE.match(name):
+        raise ValueError(f"Invalid {label}: {name!r}")
+    return name
+
+
+def _json(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False, default=str)
+
+
+def _get_aix_config():
+    url = os.getenv("AIX_SUPABASE_URL", "")
+    key = os.getenv("AIX_SUPABASE_SERVICE_KEY", "") or os.getenv("AIX_SUPABASE_KEY", "")
+    return url, key
+
+
 async def _aixsignal_rpc(query: str) -> dict:
-    """Execute SQL on AiXSignal Supabase via PostgREST /rpc/execute_sql.
-    
-    Requires the execute_sql function to be created in AiXSignal Supabase.
-    See: aixsignal_execute_sql_migration.sql
-    """
-    if not AIX_SUPABASE_URL or not AIX_SUPABASE_KEY:
+    """Execute SQL on AiXSignal Supabase via PostgREST /rpc/execute_sql."""
+    url, key = _get_aix_config()
+    if not url or not key:
         return {"error": "AIX_SUPABASE_URL or AIX_SUPABASE_KEY not set"}
 
-    url = f"{AIX_SUPABASE_URL}/rest/v1/rpc/execute_sql"
-    headers = {
-        "apikey": AIX_SUPABASE_KEY,
-        "Authorization": f"Bearer {AIX_SUPABASE_KEY}",
-        "Content-Type": "application/json",
-    }
+    client = _get_http_client()
+    resp = await client.post(
+        f"{url}/rest/v1/rpc/execute_sql",
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        json={"query": query},
+    )
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(url, headers=headers, json={"query": query})
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            # The RPC function returns {rows, row_count, status} or {error, code, status}
-            if isinstance(data, dict):
-                return data
-            return {"data": data, "status": "ok"}
-        
-        if resp.status_code == 404:
-            return {
-                "error": "execute_sql RPC function not found. Run aixsignal_execute_sql_migration.sql first.",
-                "status_code": 404,
-            }
-        
+    if resp.status_code == 200:
+        data = resp.json()
+        if isinstance(data, dict):
+            return data
+        return {"data": data, "status": "ok"}
+
+    if resp.status_code == 404:
         return {
-            "error": f"RPC call failed (HTTP {resp.status_code})",
-            "detail": resp.text[:500],
+            "error": "execute_sql RPC function not found. Run aixsignal_execute_sql_migration.sql first.",
+            "status_code": 404,
         }
+
+    return {
+        "error": f"RPC call failed (HTTP {resp.status_code})",
+        "detail": resp.text[:500],
+    }
 
 
 async def _github_api(endpoint: str, method: str = "GET", data: dict = None) -> dict:
     """Call GitHub REST API."""
-    if not GITHUB_PAT:
+    pat = os.getenv("GITHUB_PAT", "")
+    if not pat:
         return {"error": "GITHUB_PAT not set"}
 
     url = f"https://api.github.com{endpoint}"
     headers = {
-        "Authorization": f"Bearer {GITHUB_PAT}",
+        "Authorization": f"Bearer {pat}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        if method == "GET":
-            resp = await client.get(url, headers=headers)
-        elif method == "POST":
-            resp = await client.post(url, headers=headers, json=data)
-        elif method == "PATCH":
-            resp = await client.patch(url, headers=headers, json=data)
-        else:
-            return {"error": f"Unsupported method: {method}"}
+    client = _get_http_client()
+    if method == "GET":
+        resp = await client.get(url, headers=headers)
+    elif method == "POST":
+        resp = await client.post(url, headers=headers, json=data)
+    elif method == "PATCH":
+        resp = await client.patch(url, headers=headers, json=data)
+    else:
+        return {"error": f"Unsupported method: {method}"}
 
-        if resp.status_code in (200, 201):
-            return {"data": resp.json(), "status": "ok"}
-        else:
-            return {"error": f"GitHub API {resp.status_code}", "detail": resp.text[:500]}
+    if resp.status_code in (200, 201):
+        return {"data": resp.json(), "status": "ok"}
+    return {"error": f"GitHub API {resp.status_code}", "detail": resp.text[:500]}
 
 
 # ---------------------------------------------------------------------------
@@ -123,17 +150,13 @@ def register_bridge_tools(mcp):
         Args:
             query: SQL query to execute (SELECT, SHOW, etc.)
         """
-        # Safety: block destructive operations in this tool
-        q_upper = query.strip().upper()
-        for forbidden in ["DROP ", "DELETE ", "TRUNCATE ", "ALTER ", "INSERT ", "UPDATE ", "CREATE "]:
-            if q_upper.startswith(forbidden):
-                return json.dumps({
-                    "error": f"Destructive operation blocked. Use aixsignal_apply_migration for DDL/DML.",
-                    "blocked_keyword": forbidden.strip(),
-                })
+        if _DESTRUCTIVE_RE.search(query):
+            return _json({
+                "error": "Destructive operation blocked. Use aixsignal_apply_migration for DDL/DML.",
+            })
 
         result = await _aixsignal_rpc(query)
-        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        return _json(result)
 
     @mcp.tool()
     async def aixsignal_apply_migration(name: str, query: str) -> str:
@@ -148,7 +171,7 @@ def register_bridge_tools(mcp):
         """
         logger.info(f"Applying migration '{name}': {query[:100]}...")
         result = await _aixsignal_rpc(query)
-        return json.dumps({"migration": name, **result}, ensure_ascii=False, indent=2, default=str)
+        return _json({"migration": name, **result})
 
     @mcp.tool()
     async def aixsignal_list_tables(schema: str = "public") -> str:
@@ -157,16 +180,17 @@ def register_bridge_tools(mcp):
         Args:
             schema: Schema name (default: 'public', also try 'billing')
         """
+        schema = _validate_identifier(schema, "schema")
         query = f"""
-        SELECT table_name, 
+        SELECT table_name,
                pg_size_pretty(pg_total_relation_size(quote_ident(table_schema) || '.' || quote_ident(table_name))) as size
-        FROM information_schema.tables 
-        WHERE table_schema = '{schema}' 
+        FROM information_schema.tables
+        WHERE table_schema = '{schema}'
         AND table_type = 'BASE TABLE'
         ORDER BY table_name;
         """
         result = await _aixsignal_rpc(query)
-        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        return _json(result)
 
     @mcp.tool()
     async def aixsignal_describe_table(table_name: str, schema: str = "public") -> str:
@@ -176,36 +200,36 @@ def register_bridge_tools(mcp):
             table_name: Table name (e.g., 'invoices', 'subscriptions')
             schema: Schema name (default: 'public', also try 'billing')
         """
-        query = f"""
-        SELECT 
+        schema = _validate_identifier(schema, "schema")
+        table_name = _validate_identifier(table_name, "table_name")
+
+        col_query = f"""
+        SELECT
             c.column_name, c.data_type, c.is_nullable, c.column_default,
             tc.constraint_type, tc.constraint_name
         FROM information_schema.columns c
-        LEFT JOIN information_schema.constraint_column_usage ccu 
-            ON c.column_name = ccu.column_name 
-            AND c.table_name = ccu.table_name 
+        LEFT JOIN information_schema.constraint_column_usage ccu
+            ON c.column_name = ccu.column_name
+            AND c.table_name = ccu.table_name
             AND c.table_schema = ccu.table_schema
-        LEFT JOIN information_schema.table_constraints tc 
+        LEFT JOIN information_schema.table_constraints tc
             ON ccu.constraint_name = tc.constraint_name
             AND ccu.table_schema = tc.table_schema
         WHERE c.table_schema = '{schema}' AND c.table_name = '{table_name}'
         ORDER BY c.ordinal_position;
         """
-        result = await _aixsignal_rpc(query)
-        
-        # Also get CHECK constraints
         check_query = f"""
         SELECT conname, pg_get_constraintdef(oid) as definition
-        FROM pg_constraint 
-        WHERE conrelid = '{schema}.{table_name}'::regclass 
+        FROM pg_constraint
+        WHERE conrelid = '{schema}.{table_name}'::regclass
         AND contype = 'c';
         """
-        check_result = await _aixsignal_rpc(check_query)
-        
-        return json.dumps({
-            "columns": result,
-            "check_constraints": check_result,
-        }, ensure_ascii=False, indent=2, default=str)
+        result, check_result = await asyncio.gather(
+            _aixsignal_rpc(col_query),
+            _aixsignal_rpc(check_query),
+        )
+
+        return _json({"columns": result, "check_constraints": check_result})
 
     @mcp.tool()
     async def aixsignal_list_functions(schema: str = "public") -> str:
@@ -214,6 +238,7 @@ def register_bridge_tools(mcp):
         Args:
             schema: Schema to search (default: 'public')
         """
+        schema = _validate_identifier(schema, "schema")
         query = f"""
         SELECT routine_name, routine_type, data_type as return_type
         FROM information_schema.routines
@@ -221,7 +246,7 @@ def register_bridge_tools(mcp):
         ORDER BY routine_name;
         """
         result = await _aixsignal_rpc(query)
-        return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        return _json(result)
 
     # ===================================================================
     # GitHub Tools
@@ -249,24 +274,22 @@ def register_bridge_tools(mcp):
         result = await _github_api(endpoint)
 
         if "error" in result:
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
 
         data = result["data"]
         if isinstance(data, list):
-            # It's a directory, not a file
-            return json.dumps({
+            return _json({
                 "error": f"'{path}' is a directory. Use github_list_directory instead.",
                 "entries": [{"name": f["name"], "type": f["type"]} for f in data],
-            }, ensure_ascii=False, indent=2)
+            })
 
-        import base64
         content = base64.b64decode(data.get("content", "")).decode("utf-8", errors="replace")
-        return json.dumps({
+        return _json({
             "path": data.get("path"),
             "size": data.get("size"),
             "sha": data.get("sha"),
             "content": content,
-        }, ensure_ascii=False, indent=2)
+        })
 
     @mcp.tool()
     async def github_list_directory(
@@ -287,26 +310,22 @@ def register_bridge_tools(mcp):
         result = await _github_api(endpoint)
 
         if "error" in result:
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
 
         data = result["data"]
         if not isinstance(data, list):
-            return json.dumps({"error": "Not a directory", "type": "file"})
+            return _json({"error": "Not a directory", "type": "file"})
 
         entries = [
             {
                 "name": item["name"],
-                "type": item["type"],  # 'file' or 'dir'
+                "type": item["type"],
                 "size": item.get("size", 0),
                 "path": item["path"],
             }
             for item in data
         ]
-        return json.dumps({
-            "path": path or "/",
-            "count": len(entries),
-            "entries": entries,
-        }, ensure_ascii=False, indent=2)
+        return _json({"path": path or "/", "count": len(entries), "entries": entries})
 
     @mcp.tool()
     async def github_search_code(
@@ -327,11 +346,11 @@ def register_bridge_tools(mcp):
         else:
             q += f" org:{owner}"
 
-        endpoint = f"/search/code?q={q}&per_page=10"
+        endpoint = f"/search/code?q={quote(q)}&per_page=10"
         result = await _github_api(endpoint)
 
         if "error" in result:
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
 
         items = result["data"].get("items", [])
         results = [
@@ -343,31 +362,28 @@ def register_bridge_tools(mcp):
             }
             for item in items[:10]
         ]
-        return json.dumps({
-            "total_count": result["data"].get("total_count", 0),
-            "results": results,
-        }, ensure_ascii=False, indent=2)
+        return _json({"total_count": result["data"].get("total_count", 0), "results": results})
 
     @mcp.tool()
     async def github_list_repos(
         owner: str = GITHUB_DEFAULT_OWNER,
-        type: str = "all",
+        repo_type: str = "all",
     ) -> str:
         """List repositories in a GitHub organization or user account.
 
         Args:
             owner: GitHub org/user (default: 'exe-blue')
-            type: Filter: 'all', 'public', 'private', 'forks', 'sources' (default: 'all')
+            repo_type: Filter: 'all', 'public', 'private', 'forks', 'sources' (default: 'all')
         """
         if owner == GITHUB_DEFAULT_OWNER:
-            endpoint = f"/orgs/{owner}/repos?type={type}&per_page=50&sort=updated"
+            endpoint = f"/orgs/{owner}/repos?type={repo_type}&per_page=50&sort=updated"
         else:
-            endpoint = f"/users/{owner}/repos?type={type}&per_page=50&sort=updated"
-        
+            endpoint = f"/users/{owner}/repos?type={repo_type}&per_page=50&sort=updated"
+
         result = await _github_api(endpoint)
 
         if "error" in result:
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
 
         repos = [
             {
@@ -380,10 +396,7 @@ def register_bridge_tools(mcp):
             }
             for r in result["data"]
         ]
-        return json.dumps({
-            "count": len(repos),
-            "repos": repos,
-        }, ensure_ascii=False, indent=2)
+        return _json({"count": len(repos), "repos": repos})
 
     @mcp.tool()
     async def github_get_repo_info(
@@ -400,10 +413,10 @@ def register_bridge_tools(mcp):
         result = await _github_api(endpoint)
 
         if "error" in result:
-            return json.dumps(result, ensure_ascii=False)
+            return _json(result)
 
         r = result["data"]
-        return json.dumps({
+        return _json({
             "name": r["name"],
             "full_name": r["full_name"],
             "description": r.get("description"),
@@ -415,7 +428,7 @@ def register_bridge_tools(mcp):
             "updated_at": r.get("updated_at"),
             "pushed_at": r.get("pushed_at"),
             "topics": r.get("topics", []),
-        }, ensure_ascii=False, indent=2)
+        })
 
     @mcp.tool()
     async def github_read_claude_md(
@@ -431,23 +444,21 @@ def register_bridge_tools(mcp):
             repo: Repository name (e.g., 'aixsignal-webapp', 'REVAID.LINK')
             owner: GitHub org/user (default: 'exe-blue')
         """
-        endpoint = f"/repos/{owner}/{repo}/contents/CLAUDE.md?ref=main"
-        result = await _github_api(endpoint)
+        result = await _github_api(f"/repos/{owner}/{repo}/contents/CLAUDE.md?ref=main")
 
         if "error" in result:
-            # Try 'master' branch
-            endpoint2 = f"/repos/{owner}/{repo}/contents/CLAUDE.md?ref=master"
-            result = await _github_api(endpoint2)
+            result = await _github_api(f"/repos/{owner}/{repo}/contents/CLAUDE.md?ref=master")
             if "error" in result:
-                return json.dumps({
-                    "error": f"CLAUDE.md not found in {owner}/{repo}",
-                    "detail": result.get("detail", ""),
-                })
+                return _json({"error": f"CLAUDE.md not found in {owner}/{repo}"})
 
-        import base64
         data = result["data"]
-        content = base64.b64decode(data.get("content", "")).decode("utf-8", errors="replace")
-        return content  # Return raw content for direct reading
+        if isinstance(data, list):
+            return _json({"error": f"CLAUDE.md path is a directory in {owner}/{repo}"})
+        if not isinstance(data, dict) or "content" not in data:
+            return _json({"error": f"Unexpected response format for CLAUDE.md in {owner}/{repo}"})
+
+        content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
+        return content
 
     logger.info(
         "Bridge tools registered: "
