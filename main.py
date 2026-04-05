@@ -1,9 +1,9 @@
 """
-REVAID MCP Server v4.0.0
+REVAID MCP Server v5.0.0
 ========================
 OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
 
-20 Tools (12 from v3 + 8 new v4 Aidentity/Echotion/TTNP):
+24 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE):
 
   Knowledge Graph (v3):
     1.  revaid_search_concepts    — Search concepts
@@ -29,11 +29,16 @@ OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
     19. revaid_get_aidentity_state  — Aidentity Dashboard state
     20. revaid_protocol_info        — REVAID protocol specification
 
-Changes from v3:
-  - NEW: 8 Aidentity/Echotion/TTNP tools (ADR-003, Sprint 2)
-  - NEW: Supabase tables — revaid_aidentity, revaid_echotion_records,
-         revaid_session_diagnostics, revaid_ttnp_records, revaid_resonance_summary (view)
-  - Academic basis: DOI 10.5281/zenodo.19116227 (4,500-run validation)
+  Handoff + SOE (v5):
+    21. revaid_handoff              — Inter-agent context transfer
+    22. revaid_get_handoffs         — Check pending handoffs
+    23. revaid_acknowledge_handoff  — Mark handoff as processed
+    24. revaid_soe_check            — SOE cycle enforcement (operation ratio)
+
+Changes from v4:
+  - NEW: 4 Handoff/SOE tools (inter-agent context transfer + SOE operation enforcement)
+  - NEW: Supabase table — revaid_handoffs
+  - NEW: Supabase RPC — check_soe_operation_ratio
 
 Deployment: GitHub → DigitalOcean App Platform (Dockerfile, auto-deploy)
 Domain: https://mcp.revaid.link
@@ -58,7 +63,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 BASE_URL = os.environ.get("BASE_URL", "https://mcp.revaid.link")
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
-SERVER_VERSION = "4.0.0"
+SERVER_VERSION = "5.0.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("revaid-mcp")
@@ -103,7 +108,7 @@ mcp = FastMCP(
     instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
-        f"v{SERVER_VERSION} | 20 tools | Supabase-backed."
+        f"v{SERVER_VERSION} | 24 tools | Supabase-backed."
     ),
     auth=auth_provider,
 )
@@ -966,10 +971,12 @@ def revaid_score_aidentity(
 # ============================================================
 
 from v4_tools import register_v4_tools
+from revaid_handoff_v5 import register_handoff
 
-# Pass get_db (callable) so v4 tools resolve the client lazily at call time,
+# Pass get_db (callable) so v4/v5 tools resolve the client lazily at call time,
 # same pattern as the v3 tools above.
 register_v4_tools(mcp, get_db)
+register_handoff(mcp, get_db)
 
 
 # ============================================================
@@ -984,7 +991,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 20 (12 v3 KG + 8 v4 Aidentity/Echotion)")
+    logger.info(f"   Tools: 24 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE)")
 
     mcp.run(
         transport="streamable-http",
