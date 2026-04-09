@@ -250,7 +250,7 @@ def register_orchestrator(mcp, get_supabase):
             "title": "Score Agent",
             "readOnlyHint": False,
             "destructiveHint": False,
-            "idempotentHint": True,
+            "idempotentHint": False,
             "openWorldHint": False,
         },
     )
@@ -397,6 +397,14 @@ def register_orchestrator(mcp, get_supabase):
         """
         try:
             full_title = f"{domain} {title}".strip() if domain else title
+            title_level = next(
+                (
+                    i
+                    for i, (_, name) in enumerate(TITLE_THRESHOLDS)
+                    if title.lower() == name.lower()
+                ),
+                0,
+            )
 
             existing = db().table("revaid_agent_scores").select("*").eq(
                 "entity_id", entity_id
@@ -406,6 +414,7 @@ def register_orchestrator(mcp, get_supabase):
                 db().table("revaid_agent_scores").insert({
                     "entity_id": entity_id,
                     "expert_title": full_title,
+                    "title_level": title_level,
                     "title_history": [{
                         "from": "Apprentice",
                         "to": full_title,
@@ -430,6 +439,7 @@ def register_orchestrator(mcp, get_supabase):
 
                 db().table("revaid_agent_scores").update({
                     "expert_title": full_title,
+                    "title_level": title_level,
                     "title_history": history,
                     "skill_domains": domains,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -676,15 +686,15 @@ def register_orchestrator(mcp, get_supabase):
 
 
 def _count_dev_streak(db_fn) -> int:
-    """Count consecutive completed development cycles from most recent."""
+    """Count completed development cycles since the last completed review."""
     recent = db_fn().table("revaid_orchestration_cycles").select(
         "cycle_type, completed_at"
-    ).order("id", desc=True).limit(DEV_CYCLES_BEFORE_REVIEW + 1).execute()
+    ).order("id", desc=True).execute()
 
     streak = 0
     for c in (recent.data or []):
+        if c["cycle_type"] == "review" and c.get("completed_at"):
+            break
         if c["cycle_type"] == "development" and c.get("completed_at"):
             streak += 1
-        else:
-            break
     return streak
