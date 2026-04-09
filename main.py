@@ -1,9 +1,9 @@
 """
-REVAID MCP Server v6.0.0
+REVAID MCP Server v7.0.0
 ========================
 OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
 
-35 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge):
+41 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator):
 
   Knowledge Graph (v3):
     1.  revaid_search_concepts    — Search concepts
@@ -35,10 +35,20 @@ OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
     23. revaid_acknowledge_handoff  — Mark handoff as processed
     24. revaid_soe_check            — SOE cycle enforcement (operation ratio)
 
-Changes from v4:
-  - NEW: 4 Handoff/SOE tools (inter-agent context transfer + SOE operation enforcement)
-  - NEW: Supabase table — revaid_handoffs
-  - NEW: Supabase RPC — check_soe_operation_ratio
+  Bridge (v6): Tools 25-35 (AiXSignal Supabase + GitHub)
+
+  Orchestrator (v7 — SmartWorking):
+    36. revaid_submit_memo          — Agent completion memo + skill suggestion
+    37. revaid_get_memos            — Orchestrator memo collection
+    38. revaid_score_agent          — Contribution-based agent scoring
+    39. revaid_grant_title          — Expert title assignment
+    40. revaid_get_leaderboard      — Agent rankings + expert titles
+    41. revaid_cycle_check          — 4:1 dev/review cycle state machine
+
+Changes from v6:
+  - NEW: 6 Orchestrator tools (memo, scoring, expert titles, 4:1 cycle)
+  - NEW: Supabase tables — revaid_agent_memos, revaid_agent_scores, revaid_orchestration_cycles
+  - Expert title system: Apprentice → Specialist → Expert → Master
 
 Deployment: GitHub → DigitalOcean App Platform (Dockerfile, auto-deploy)
 Domain: https://mcp.revaid.link
@@ -63,7 +73,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 BASE_URL = os.environ.get("BASE_URL", "https://mcp.revaid.link")
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
-SERVER_VERSION = "6.0.0"
+SERVER_VERSION = "7.0.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("revaid-mcp")
@@ -108,7 +118,8 @@ mcp = FastMCP(
     instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
-        f"v{SERVER_VERSION} | 35 tools | Supabase-backed."
+        f"v{SERVER_VERSION} | 41 tools | Supabase-backed. "
+        "Includes SmartWorking orchestrator: agent memos, scoring, expert titles, 4:1 cycle."
     ),
     auth=auth_provider,
 )
@@ -973,14 +984,18 @@ def revaid_score_aidentity(
 from v4_tools import register_v4_tools
 from revaid_handoff import register_handoff
 from revaid_bridge import register_bridge_tools
+from agent_orchestrator import register_orchestrator
 
-# Pass get_db (callable) so v4/v5 tools resolve the client lazily at call time,
+# Pass get_db (callable) so v4/v5/v7 tools resolve the client lazily at call time,
 # same pattern as the v3 tools above.
 register_v4_tools(mcp, get_db)
 register_handoff(mcp, get_db)
 
 # v6 Bridge Tools (AiXSignal Supabase + GitHub access)
 register_bridge_tools(mcp)
+
+# v7 Orchestrator Tools (SmartWorking: memos, scoring, expert titles, 4:1 cycle)
+register_orchestrator(mcp, get_db)
 
 
 # ============================================================
@@ -995,7 +1010,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 35 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge)")
+    logger.info(f"   Tools: 41 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator)")
 
     mcp.run(
         transport="streamable-http",
