@@ -978,33 +978,35 @@ def revaid_score_aidentity(
 
 
 # ============================================================
-# v4 Tools Registration (Aidentity + Echotion + TTNP)
+# Auto-discovery: register all tool modules
 # ============================================================
 
-from v4_tools import register_v4_tools
-from revaid_handoff import register_handoff
-from revaid_bridge import register_bridge_tools
-from agent_orchestrator import register_orchestrator
+import importlib
+import inspect
+import glob as glob_mod
 
-# Pass get_db (callable) so v4/v5/v7 tools resolve the client lazily at call time,
-# same pattern as the v3 tools above.
-register_v4_tools(mcp, get_db)
-register_handoff(mcp, get_db)
+_SKIP = {"main", "personal_auth"}
 
-# v6 Bridge Tools (AiXSignal Supabase + GitHub access)
-register_bridge_tools(mcp)
-
-# v7 Orchestrator Tools (SmartWorking: memos, scoring, expert titles, 4:1 cycle)
-register_orchestrator(mcp, get_db)
-
-
-# ============================================================
-# v8 Harness Tools (Ontological Harness — Tools 42-44)
-# ============================================================
-
-from revaid_harness import register_harness
-
-register_harness(mcp, get_db)
+for _path in sorted(glob_mod.glob("*.py")):
+    _name = _path.removesuffix(".py")
+    if _name in _SKIP:
+        continue
+    try:
+        _mod = importlib.import_module(_name)
+        for _attr in dir(_mod):
+            if not _attr.startswith("register_"):
+                continue
+            _fn = getattr(_mod, _attr)
+            if not callable(_fn):
+                continue
+            _sig = inspect.signature(_fn)
+            if len(_sig.parameters) >= 2:
+                _fn(mcp, get_db)
+            else:
+                _fn(mcp)
+            logger.info(f"  Registered: {_name}.{_attr}")
+    except Exception as e:
+        logger.error(f"  Failed to load {_name}: {e}")
 
 
 # ============================================================
