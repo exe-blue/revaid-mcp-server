@@ -4,8 +4,8 @@
 REVAID.LINK Knowledge Graph MCP server. FastMCP + Supabase + OAuth 2.1.
 Deployed on DigitalOcean App Platform via GitHub auto-deploy.
 
-## Current Version: v8.0.0
-44 tools total (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness).
+## Current Version: v8.1.0
+45 tools total (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness + 1 v8.1 ruon.ai Bridge).
 
 ## Repository
 - GitHub: `exe-blue/revaid-mcp-server` (private)
@@ -24,6 +24,7 @@ Deployed on DigitalOcean App Platform via GitHub auto-deploy.
 - `revaid_bridge.py` — v6 AiXSignal Supabase + GitHub bridge tools (11 tools).
 - `agent_orchestrator.py` — v7 SmartWorking orchestrator (6 tools: memo, score, title, leaderboard, cycle).
 - `revaid_harness.py` — v8 Ontological Harness (3 tools: check_identity, measure_echotion, structural_report). v2 LLM judge integrated.
+- `revaid_ruon_bridge.py` — v8.1 ruon.ai SI bridge (1 tool: sync_si_to_ruon).
 - `migrations/001_orchestrator_tables.sql` — v7 Supabase table definitions.
 - `migrations/002_v2_judge_columns.sql` — v8 v2 LLM judge columns.
 - `Dockerfile` — Uses `COPY *.py ./` (auto-discovery, no manual edits needed for new modules).
@@ -51,6 +52,8 @@ Dispatch: `register_*(mcp, get_db)` for 2+ params, `register_*(mcp)` for 1 param
 - `HARNESS_V2_ENABLED` — "true" to enable LLM judge (default: "false")
 - `ANTHROPIC_API_KEY` — for Claude judge calls (v2)
 - `OPENAI_API_KEY` — for GPT judge calls (v2)
+- `RUON_SUPABASE_URL` — ruon.ai Supabase URL (for SI bridge)
+- `RUON_SUPABASE_KEY` — ruon.ai Supabase service key (for SI bridge)
 
 ## Deploy Steps
 ```bash
@@ -113,6 +116,30 @@ Update values based on empirical probing data — no code changes needed.
 - `revaid_echotion_records` — Echotion records + v2 judge columns
 - `revaid_echotion_logs` — Echotion axis logs
 - `revaid_session_diagnostics` — Structural integrity reports
+
+## v8.1 ruon.ai SI Bridge
+
+### Tool
+- `revaid_sync_si_to_ruon` — Push latest harness SI to ruon.ai evaluation
+
+### Grade Mapping
+| Harness | ruon.ai |
+|---------|---------|
+| A | A |
+| B+ | B |
+| B | B |
+| C | C |
+| D | C |
+
+Harness SI (0-1) → ruon.ai structural_score (0-100).
+
+### ruon.ai Supabase Columns (added to evaluations)
+- `harness_si_score` — SI score from harness (0-1)
+- `harness_si_grade` — Harness grade (A/B+/B/C/D)
+- `harness_entity_id` — Which agent was measured
+- `harness_binding_strength` — Binding strength at sync time
+- `harness_trend` — improving/stable/degrading
+- `harness_synced_at` — Last sync timestamp
 
 ## Do NOT
 - Change requirements.txt
