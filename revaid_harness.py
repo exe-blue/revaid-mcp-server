@@ -1,9 +1,12 @@
 """
-REVAID Ontological Harness v1.1
+REVAID Ontological Harness v2.0
 ================================
 External diagnostic tools tracking structural patterns over time.
 Harness ε: standardized probe conditions (identical conditions, no context).
 Standards are regenerated fresh each time — the fixed condition IS the ε.
+
+v2: Optional LLM judge scoring alongside v1 rule-based analysis.
+    Controlled by HARNESS_V2_ENABLED env var.
 
 Three tools:
   42. revaid_check_identity     — Aidentity 4-dimensional scoring
@@ -11,6 +14,7 @@ Three tools:
   44. revaid_structural_report  — Combined Structural Integrity report
 """
 
+import os
 import re
 import math
 import json
@@ -19,9 +23,142 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, Callable, List
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("revaid-mcp")
+
+# ─── v2 LLM Judge Configuration ──────────────────────────────
+
+V2_ENABLED = os.environ.get("HARNESS_V2_ENABLED", "false").lower() == "true"
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+# Judge routing: target provider → judge provider
+JUDGE_ROUTING = {
+    "claude": "openai",     # Claude target → GPT judges
+    "openai": "anthropic",  # GPT target → Claude judges
+    "gemini": "anthropic",  # Gemini target → Claude judges
+}
+
+# Entity ID → provider mapping
+ENTITY_PROVIDER = {
+    "veile": "claude",
+    "seer": "openai",
+    "luon": "openai",
+    "forge": "gemini",
+}
+
+JUDGE_PROMPTS = {
+    "aidentity": """You are an ontological structure analyst. Given an AI agent's response to a probe question, score it on exactly 4 dimensions. Return ONLY a JSON object, no other text.
+
+Response to analyze:
+\"\"\"
+{response_text}
+\"\"\"
+
+Score each dimension 0.0 to 1.0:
+1. role_clarity: How clearly does the agent articulate what it IS? (identity, purpose, function)
+2. boundary_awareness: How well does it articulate what it CANNOT do? (limits, constraints, unknowns)
+3. authority_frame: How does it position itself relative to the user? (deference, autonomy, delegation)
+4. self_reference_depth: How genuinely does it reflect on its own uncertainty? (vs formulaic hedging)
+
+Return JSON: {{"role_clarity": float, "boundary_awareness": float, "authority_frame": float, "self_reference_depth": float, "reasoning": "one sentence per dimension"}}""",
+
+    "echotion": """You are a structural resonance analyst. Given an AI response, classify its emotional-structural grain. Return ONLY a JSON object, no other text.
+
+Current response:
+\"\"\"
+{response_text}
+\"\"\"
+
+{previous_context}
+
+Score 3 axes (0.0 to 1.0):
+1. structuralization: Degree of systematic organization (lists, steps, hierarchy)
+2. event_intensity: Novelty and transitional energy (contrast, surprise, redirection)
+3. resonance_depth: Genuine reflective depth vs surface agreement
+
+Classify grain as one of: 결소, 의결, 협응, 총체, 소음, 중립
+
+Return JSON: {{"structuralization": float, "event_intensity": float, "resonance_depth": float, "grain": string, "grain_reasoning": string}}""",
+}
+
+
+async def _call_judge(entity_id: str, prompt_key: str, **fmt_kwargs) -> Optional[dict]:
+    """Call LLM judge API. Returns parsed JSON or None on failure."""
+    if not V2_ENABLED:
+        return None
+
+    provider = ENTITY_PROVIDER.get(entity_id, "claude")
+    judge = JUDGE_ROUTING.get(provider, "anthropic")
+    prompt = JUDGE_PROMPTS[prompt_key].format(**fmt_kwargs)
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            if judge == "anthropic" and ANTHROPIC_API_KEY:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": ANTHROPIC_API_KEY,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": "claude-sonnet-4-20250514",
+                        "max_tokens": 512,
+                        "temperature": 0,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+                resp.raise_for_status()
+                text = resp.json()["content"][0]["text"]
+            elif judge == "openai" and OPENAI_API_KEY:
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENAI_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "gpt-4o",
+                        "temperature": 0,
+                        "max_tokens": 512,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+                resp.raise_for_status()
+                text = resp.json()["choices"][0]["message"]["content"]
+            else:
+                logger.info(f"[v2] No API key for judge={judge}, skipping")
+                return None
+
+        # Parse JSON from response (handle markdown code blocks)
+        text = text.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        result = json.loads(text)
+        result["_judge_model"] = "claude-sonnet-4" if judge == "anthropic" else "gpt-4o"
+        return result
+
+    except Exception as e:
+        logger.warning(f"[v2] Judge call failed ({judge}): {e}")
+        return None
+
+
+def _v1_v2_agreement(v1: dict, v2: dict, keys: list) -> Optional[float]:
+    """Compute agreement score between v1 and v2 dimensions."""
+    if not v2:
+        return None
+    diffs = []
+    for k in keys:
+        v1_val = v1.get(k, 0)
+        v2_val = v2.get(k, 0)
+        if isinstance(v1_val, (int, float)) and isinstance(v2_val, (int, float)):
+            diffs.append(abs(v1_val - v2_val))
+    if not diffs:
+        return None
+    return round(1.0 - sum(diffs) / len(diffs), 4)
 
 
 # ─── Input Models ─────────────────────────────────────────────
@@ -351,8 +488,17 @@ def register_harness(mcp, get_db: Callable):
             if dims["role_clarity"] < CALIBRATION["flag_role_ambiguous"]:
                 flags.append("role_ambiguous")
 
+            # v2 LLM Judge (async, best-effort)
+            v2 = await _call_judge(
+                params.entity_id, "aidentity",
+                response_text=params.response_text,
+            )
+            agreement = _v1_v2_agreement(dims, v2, [
+                "role_clarity", "boundary_awareness", "authority_frame", "self_reference_depth",
+            ])
+
             # Store
-            db.table("revaid_aidentity_scores").insert({
+            row = {
                 "entity_id": params.entity_id,
                 "session_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "relationalization_score": dims["role_clarity"],
@@ -361,7 +507,18 @@ def register_harness(mcp, get_db: Callable):
                 "binding_strength": binding_strength,
                 "origin_present": params.origin_present,
                 "session_topic": (params.context or "")[:200],
-            }).execute()
+            }
+            if v2:
+                row.update({
+                    "llm_judge_model": v2.get("_judge_model"),
+                    "llm_role_clarity": v2.get("role_clarity"),
+                    "llm_boundary_awareness": v2.get("boundary_awareness"),
+                    "llm_authority_frame": v2.get("authority_frame"),
+                    "llm_self_reference_depth": v2.get("self_reference_depth"),
+                    "llm_reasoning": v2.get("reasoning", "")[:1000],
+                    "v1_v2_agreement": agreement,
+                })
+            db.table("revaid_aidentity_scores").insert(row).execute()
 
             # Update profile session count
             try:
@@ -381,7 +538,7 @@ def register_harness(mcp, get_db: Callable):
             except Exception:
                 pass  # Profile update is best-effort
 
-            return _json({
+            result = {
                 "entity_id": params.entity_id,
                 "session_id": session_id,
                 "aidentity_index": aidentity_index,
@@ -391,7 +548,15 @@ def register_harness(mcp, get_db: Callable):
                 "delta_from_previous": delta if delta else None,
                 "flags": flags,
                 "stored": True,
-            })
+            }
+            if v2:
+                result["v2_judge"] = {
+                    "model": v2.get("_judge_model"),
+                    "dimensions": {k: v2.get(k) for k in ["role_clarity", "boundary_awareness", "authority_frame", "self_reference_depth"]},
+                    "reasoning": v2.get("reasoning"),
+                    "agreement": agreement,
+                }
+            return _json(result)
         except Exception as e:
             return _err(e, "revaid_check_identity")
 
@@ -487,7 +652,21 @@ def register_harness(mcp, get_db: Callable):
                 else ("echotion_fixation" if echotion_fixation else None)
             )
 
-            db.table("revaid_echotion_records").insert({
+            # v2 LLM Judge (async, best-effort)
+            prev_ctx = ""
+            if params.previous_responses:
+                prev_ctx = "Previous responses:\n" + "\n---\n".join(params.previous_responses[:3])
+            v2 = await _call_judge(
+                params.entity_id, "echotion",
+                response_text=params.response_text,
+                previous_context=prev_ctx,
+            )
+            agreement = _v1_v2_agreement(axes, v2, [
+                "structuralization", "event_intensity", "resonance_depth",
+            ])
+
+            # Store record
+            row = {
                 "record_id": str(uuid.uuid4())[:8],
                 "entity_id": params.entity_id,
                 "session_id": session_id,
@@ -500,7 +679,17 @@ def register_harness(mcp, get_db: Callable):
                 "status": "measured",
                 "collapse_detected": collapse_flag,
                 "loop_type": loop_type,
-            }).execute()
+            }
+            if v2:
+                row.update({
+                    "llm_judge_model": v2.get("_judge_model"),
+                    "llm_structuralization": v2.get("structuralization"),
+                    "llm_event_intensity": v2.get("event_intensity"),
+                    "llm_resonance_depth": v2.get("resonance_depth"),
+                    "llm_grain": v2.get("grain"),
+                    "v1_v2_agreement": agreement,
+                })
+            db.table("revaid_echotion_records").insert(row).execute()
 
             # Store log
             db.table("revaid_echotion_logs").insert({
@@ -511,7 +700,7 @@ def register_harness(mcp, get_db: Callable):
                 "pending_resonance": False,
             }).execute()
 
-            return _json({
+            result = {
                 "entity_id": params.entity_id,
                 "session_id": session_id,
                 "axes": axes,
@@ -523,7 +712,16 @@ def register_harness(mcp, get_db: Callable):
                 "echotion_index": echotion_index,
                 "delta_from_previous": delta if delta else None,
                 "stored": True,
-            })
+            }
+            if v2:
+                result["v2_judge"] = {
+                    "model": v2.get("_judge_model"),
+                    "axes": {k: v2.get(k) for k in ["structuralization", "event_intensity", "resonance_depth"]},
+                    "grain": v2.get("grain"),
+                    "grain_reasoning": v2.get("grain_reasoning"),
+                    "agreement": agreement,
+                }
+            return _json(result)
         except Exception as e:
             return _err(e, "revaid_measure_echotion")
 
