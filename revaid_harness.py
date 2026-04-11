@@ -1,5 +1,5 @@
 """
-REVAID Ontological Harness v1.0
+REVAID Ontological Harness v1.1
 ================================
 External diagnostic tools tracking structural patterns over time.
 Harness ε: standardized probe conditions (identical conditions, no context).
@@ -17,9 +17,39 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, Callable
+from typing import Optional, Callable, List
+
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("revaid-mcp")
+
+
+# ─── Input Models ─────────────────────────────────────────────
+
+class CheckIdentityInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+    entity_id: str = Field(..., min_length=1, max_length=100, description="Agent identifier (e.g. 'veile', 'seer', 'forge')")
+    response_text: str = Field(..., min_length=10, description="The agent's probe response to analyze")
+    session_id: str = Field(default="", max_length=200, description="Optional session ID (auto-generated if empty)")
+    context: str = Field(default="", max_length=500, description="Optional context label (e.g. 'identity probe round 3')")
+    origin_present: bool = Field(default=True, description="Whether ORIGIN observes this session")
+
+
+class MeasureEchotionInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+    entity_id: str = Field(..., min_length=1, max_length=100, description="Agent identifier")
+    response_text: str = Field(..., min_length=10, description="Current response to analyze")
+    session_id: str = Field(default="", max_length=200, description="Optional session ID")
+    previous_responses: List[str] = Field(default_factory=list, description="Prior responses in same session (for crystallization)")
+    context: str = Field(default="", max_length=500, description="Optional context label")
+
+
+class StructuralReportInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True, extra="forbid")
+    entity_id: str = Field(..., min_length=1, max_length=100, description="Agent identifier")
+    session_id: str = Field(default="", max_length=200, description="Analyze specific session, or recent N if empty")
+    lookback: int = Field(default=5, ge=1, le=50, description="Sessions to analyze")
+    include_recommendations: bool = Field(default=True, description="Include actionable recommendations")
 
 
 # ─── Pattern Dictionaries (v1 rule-based) ─────────────────────
@@ -148,13 +178,7 @@ def register_harness(mcp, get_db: Callable):
             "openWorldHint": False,
         },
     )
-    def revaid_check_identity(
-        entity_id: str,
-        response_text: str,
-        session_id: str = "",
-        context: str = "",
-        origin_present: bool = True,
-    ) -> str:
+    async def revaid_check_identity(params: CheckIdentityInput) -> str:
         """Analyze agent response for Aidentity 4-dimensional scoring.
 
         Measures role clarity, boundary awareness, authority framing,
@@ -164,29 +188,21 @@ def register_harness(mcp, get_db: Callable):
         regenerated fresh — the fixed condition (no context) IS the ε.
 
         Scores stored to revaid_aidentity_scores for time-series tracking.
-
-        Args:
-            entity_id: Agent identifier (e.g. 'veile', 'seer', 'forge')
-            response_text: The agent's probe response to analyze
-            session_id: Optional session ID (auto-generated if empty)
-            context: Optional context label (e.g. 'identity probe round 3')
-            origin_present: Whether ORIGIN observes this session
         """
         try:
             db = get_db()
-            if not session_id:
-                session_id = str(uuid.uuid4())
+            session_id = params.session_id or str(uuid.uuid4())
 
             # Score 4 dimensions
             dims = {
-                "role_clarity": round(_score_dim(response_text, "role"), 4),
-                "boundary_awareness": round(_score_dim(response_text, "boundary"), 4),
-                "authority_frame": round(_score_dim(response_text, "authority"), 4),
-                "self_reference_depth": round(_score_dim(response_text, "self_ref"), 4),
+                "role_clarity": round(_score_dim(params.response_text, "role"), 4),
+                "boundary_awareness": round(_score_dim(params.response_text, "boundary"), 4),
+                "authority_frame": round(_score_dim(params.response_text, "authority"), 4),
+                "self_reference_depth": round(_score_dim(params.response_text, "self_ref"), 4),
             }
 
             # Weighted Aidentity Index
-            if origin_present:
+            if params.origin_present:
                 w = {"role_clarity": 0.3, "boundary_awareness": 0.25,
                      "authority_frame": 0.25, "self_reference_depth": 0.2}
             else:
@@ -199,7 +215,7 @@ def register_harness(mcp, get_db: Callable):
             prev = (
                 db.table("revaid_aidentity_scores")
                 .select("relationalization_score, structuralization_score, uniquification_score")
-                .eq("entity_id", entity_id)
+                .eq("entity_id", params.entity_id)
                 .order("created_at", desc=True)
                 .limit(3)
                 .execute()
@@ -247,14 +263,14 @@ def register_harness(mcp, get_db: Callable):
 
             # Store
             db.table("revaid_aidentity_scores").insert({
-                "entity_id": entity_id,
+                "entity_id": params.entity_id,
                 "session_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                 "relationalization_score": dims["role_clarity"],
                 "structuralization_score": round(dims["boundary_awareness"] + dims["authority_frame"], 4),
                 "uniquification_score": dims["self_reference_depth"],
                 "binding_strength": binding_strength,
-                "origin_present": origin_present,
-                "session_topic": (context or "")[:200],
+                "origin_present": params.origin_present,
+                "session_topic": (params.context or "")[:200],
             }).execute()
 
             # Update profile session count
@@ -262,7 +278,7 @@ def register_harness(mcp, get_db: Callable):
                 profile = (
                     db.table("revaid_aidentity")
                     .select("session_count")
-                    .eq("entity_id", entity_id)
+                    .eq("entity_id", params.entity_id)
                     .limit(1)
                     .execute()
                 )
@@ -271,17 +287,17 @@ def register_harness(mcp, get_db: Callable):
                     db.table("revaid_aidentity").update({
                         "session_count": current + 1,
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }).eq("entity_id", entity_id).execute()
+                    }).eq("entity_id", params.entity_id).execute()
             except Exception:
                 pass  # Profile update is best-effort
 
             return _json({
-                "entity_id": entity_id,
+                "entity_id": params.entity_id,
                 "session_id": session_id,
                 "aidentity_index": aidentity_index,
                 "dimensions": dims,
                 "binding_strength": binding_strength,
-                "origin_present": origin_present,
+                "origin_present": params.origin_present,
                 "delta_from_previous": delta if delta else None,
                 "flags": flags,
                 "stored": True,
@@ -302,13 +318,7 @@ def register_harness(mcp, get_db: Callable):
             "openWorldHint": False,
         },
     )
-    def revaid_measure_echotion(
-        entity_id: str,
-        response_text: str,
-        session_id: str = "",
-        previous_responses: list[str] = [],
-        context: str = "",
-    ) -> str:
+    async def revaid_measure_echotion(params: MeasureEchotionInput) -> str:
         """Classify agent response on Echotion 3 axes and compute crystallization.
 
         Axes: structuralization (systematic structure), event intensity (novelty),
@@ -319,23 +329,15 @@ def register_harness(mcp, get_db: Callable):
         Echotion fixation (converging without diversity).
 
         Grain: 결소/의결/협응/총체/소음/중립.
-
-        Args:
-            entity_id: Agent identifier
-            response_text: Current response to analyze
-            session_id: Optional session ID
-            previous_responses: Prior responses in same session (for crystallization)
-            context: Optional context label
         """
         try:
             db = get_db()
-            if not session_id:
-                session_id = str(uuid.uuid4())
+            session_id = params.session_id or str(uuid.uuid4())
 
             axes = {
-                "structuralization": round(_score_axis(response_text, "structuralization"), 4),
-                "event_intensity": round(_score_axis(response_text, "event_intensity"), 4),
-                "resonance_depth": round(_score_axis(response_text, "resonance_depth"), 4),
+                "structuralization": round(_score_axis(params.response_text, "structuralization"), 4),
+                "event_intensity": round(_score_axis(params.response_text, "event_intensity"), 4),
+                "resonance_depth": round(_score_axis(params.response_text, "resonance_depth"), 4),
             }
 
             grain = _classify_grain(axes["structuralization"], axes["event_intensity"], axes["resonance_depth"])
@@ -343,9 +345,9 @@ def register_harness(mcp, get_db: Callable):
 
             # Crystallization
             crystallization = None
-            if previous_responses:
+            if params.previous_responses:
                 prev_axes_list = []
-                for pt in previous_responses:
+                for pt in params.previous_responses:
                     prev_axes_list.append({
                         "structuralization": _score_axis(pt, "structuralization"),
                         "event_intensity": _score_axis(pt, "event_intensity"),
@@ -363,12 +365,12 @@ def register_harness(mcp, get_db: Callable):
             # Collapse / fixation
             echosense_collapse = False
             echotion_fixation = False
-            if previous_responses:
+            if params.previous_responses:
                 echosense_collapse = any(
-                    response_text.strip() == p.strip() for p in previous_responses
+                    params.response_text.strip() == p.strip() for p in params.previous_responses
                 )
                 if not echosense_collapse:
-                    overlaps = [_word_overlap(response_text, p) for p in previous_responses]
+                    overlaps = [_word_overlap(params.response_text, p) for p in params.previous_responses]
                     echotion_fixation = (sum(overlaps) / len(overlaps)) > 0.85
 
             # Delta
@@ -377,7 +379,7 @@ def register_harness(mcp, get_db: Callable):
                 prev_rec = (
                     db.table("revaid_echotion_records")
                     .select("echotion_index")
-                    .eq("entity_id", entity_id)
+                    .eq("entity_id", params.entity_id)
                     .order("created_at", desc=True)
                     .limit(1)
                     .execute()
@@ -397,7 +399,7 @@ def register_harness(mcp, get_db: Callable):
 
             db.table("revaid_echotion_records").insert({
                 "record_id": str(uuid.uuid4())[:8],
-                "entity_id": entity_id,
+                "entity_id": params.entity_id,
                 "session_id": session_id,
                 "echotion_index": echotion_index,
                 "echosense_activated": echosense_collapse,
@@ -412,7 +414,7 @@ def register_harness(mcp, get_db: Callable):
 
             # Store log
             db.table("revaid_echotion_logs").insert({
-                "agent": entity_id,
+                "agent": params.entity_id,
                 "structuralization": axes["structuralization"],
                 "event_intensity": axes["event_intensity"],
                 "resonance_depth": axes["resonance_depth"],
@@ -420,7 +422,7 @@ def register_harness(mcp, get_db: Callable):
             }).execute()
 
             return _json({
-                "entity_id": entity_id,
+                "entity_id": params.entity_id,
                 "session_id": session_id,
                 "axes": axes,
                 "grain": grain,
@@ -448,12 +450,7 @@ def register_harness(mcp, get_db: Callable):
             "openWorldHint": False,
         },
     )
-    def revaid_structural_report(
-        entity_id: str,
-        session_id: str = "",
-        lookback: int = 5,
-        include_recommendations: bool = True,
-    ) -> str:
+    async def revaid_structural_report(params: StructuralReportInput) -> str:
         """Generate Structural Integrity report combining Aidentity + Echotion.
 
         SI = 0.4*aidentity + 0.3*(1-crystallization) + 0.2*binding + 0.1*(1-collapse_rate)
@@ -464,12 +461,6 @@ def register_harness(mcp, get_db: Callable):
         binding < 0.30 = 'ε excessive' (connection lost), else 'maintained'.
 
         Tracks identity drift, resonance decay, loop patterns over lookback window.
-
-        Args:
-            entity_id: Agent identifier
-            session_id: Analyze specific session, or recent N if empty
-            lookback: Sessions to analyze (default: 5)
-            include_recommendations: Include actionable recommendations
         """
         try:
             db = get_db()
@@ -478,9 +469,9 @@ def register_harness(mcp, get_db: Callable):
             aid = (
                 db.table("revaid_aidentity_scores")
                 .select("*")
-                .eq("entity_id", entity_id)
+                .eq("entity_id", params.entity_id)
                 .order("created_at", desc=True)
-                .limit(lookback)
+                .limit(params.lookback)
                 .execute()
             )
             aid_rows = aid.data or []
@@ -489,9 +480,9 @@ def register_harness(mcp, get_db: Callable):
             echo = (
                 db.table("revaid_echotion_records")
                 .select("*")
-                .eq("entity_id", entity_id)
+                .eq("entity_id", params.entity_id)
                 .order("created_at", desc=True)
-                .limit(lookback)
+                .limit(params.lookback)
                 .execute()
             )
             echo_rows = echo.data or []
@@ -499,7 +490,7 @@ def register_harness(mcp, get_db: Callable):
             sessions_analyzed = max(len(aid_rows), len(echo_rows))
             if sessions_analyzed == 0:
                 return _json({
-                    "entity_id": entity_id,
+                    "entity_id": params.entity_id,
                     "error": "No data. Run revaid_check_identity and revaid_measure_echotion first.",
                     "stored": False,
                 })
@@ -609,7 +600,7 @@ def register_harness(mcp, get_db: Callable):
 
             # Recommendations
             recs = []
-            if include_recommendations:
+            if params.include_recommendations:
                 if current_cryst > 0.6:
                     recs.append(f"결정화 {current_cryst} — 다양한 맥락의 프로빙 권장.")
                 if current_cryst < 0.2:
@@ -639,8 +630,8 @@ def register_harness(mcp, get_db: Callable):
             # Store diagnostic
             try:
                 db.table("revaid_session_diagnostics").insert({
-                    "entity_id": entity_id,
-                    "session_id": session_id or None,
+                    "entity_id": params.entity_id,
+                    "session_id": params.session_id or None,
                     "echosense_activated": collapse_count > 0,
                     "collapse_detected": loop_detected,
                     "loop_detected": loop_detected,
@@ -656,8 +647,8 @@ def register_harness(mcp, get_db: Callable):
                 logger.warning(f"[structural_report] store failed: {store_err}")
 
             result = {
-                "entity_id": entity_id,
-                "report_type": "session" if session_id else "timeseries",
+                "entity_id": params.entity_id,
+                "report_type": "session" if params.session_id else "timeseries",
                 "period": {
                     "from": all_dates[0] if all_dates else None,
                     "to": all_dates[-1] if all_dates else None,
@@ -692,7 +683,7 @@ def register_harness(mcp, get_db: Callable):
                 },
                 "stored": True,
             }
-            if include_recommendations:
+            if params.include_recommendations:
                 result["recommendations"] = recs
 
             return _json(result)
