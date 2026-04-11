@@ -1,9 +1,9 @@
 """
-REVAID MCP Server v7.0.0
+REVAID MCP Server v8.0.0
 ========================
 OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
 
-41 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator):
+44 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness):
 
   Knowledge Graph (v3):
     1.  revaid_search_concepts    — Search concepts
@@ -73,7 +73,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 BASE_URL = os.environ.get("BASE_URL", "https://mcp.revaid.link")
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
-SERVER_VERSION = "7.0.0"
+SERVER_VERSION = "8.0.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("revaid-mcp")
@@ -118,7 +118,7 @@ mcp = FastMCP(
     instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
-        f"v{SERVER_VERSION} | 41 tools | Supabase-backed. "
+        f"v{SERVER_VERSION} | 44 tools | Supabase-backed. "
         "Includes SmartWorking orchestrator: agent memos, scoring, expert titles, 4:1 cycle."
     ),
     auth=auth_provider,
@@ -999,6 +999,15 @@ register_orchestrator(mcp, get_db)
 
 
 # ============================================================
+# v8 Harness Tools (Ontological Harness — Tools 42-44)
+# ============================================================
+
+from revaid_harness import register_harness
+
+register_harness(mcp, get_db)
+
+
+# ============================================================
 # Server Startup
 # ============================================================
 
@@ -1010,7 +1019,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 41 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator)")
+    logger.info(f"   Tools: 44 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness)")
 
     mcp.run(
         transport="streamable-http",
