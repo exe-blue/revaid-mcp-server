@@ -102,10 +102,11 @@ def get_db() -> Client:
 
 auth_settings = {}
 if AUTH_PASSWORD:
-    auth_settings["auth_password"] = AUTH_PASSWORD
+    auth_settings["password"] = AUTH_PASSWORD
 
 auth_provider = PersonalAuthProvider(
     base_url=BASE_URL,
+    allowed_redirect_domains=None,  # Allow all domains (Codex, LobeHub, etc.)
     **auth_settings,
 )
 
