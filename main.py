@@ -104,11 +104,21 @@ auth_settings = {}
 if AUTH_PASSWORD:
     auth_settings["password"] = AUTH_PASSWORD
 
+# Persist OAuth tokens to Supabase so they survive DigitalOcean redeploys (RVD-6).
+# Falls back to JSON file if Supabase isn't configured (local dev).
+try:
+    _auth_db = get_db()
+except RuntimeError:
+    _auth_db = None
+    logger.warning("SUPABASE not configured — OAuth tokens will not persist across restarts")
+
 auth_provider = PersonalAuthProvider(
     base_url=BASE_URL,
-    allowed_redirect_domains=None,  # Allow all domains (Codex, LobeHub, etc.)
+    db_client=_auth_db,
     **auth_settings,
 )
+# Force-allow all domains (bypass init bug: None in init falls back to defaults)
+auth_provider.allowed_redirect_domains = None
 
 # ──────────────────────────────────────────────
 # MCP Server

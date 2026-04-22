@@ -13,6 +13,7 @@ Usage:
         base_url="https://your-domain.com",
         password="your-secret-password",
         allowed_redirect_domains=["claude.ai", "claude.com", "localhost"],
+        db_client=supabase_client,  # optional: persist tokens across restarts
     )
 
     mcp = FastMCP(name="my-server", auth=auth)
@@ -28,8 +29,9 @@ import json
 import secrets
 import time
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 from fastmcp.server.auth.providers.in_memory import InMemoryOAuthProvider
@@ -48,6 +50,8 @@ logger = logging.getLogger("personal-auth")
 
 DEFAULT_ACCESS_TOKEN_EXPIRY = 30 * 24 * 60 * 60  # 30 days
 DEFAULT_STATE_DIR = ".oauth-state"
+DEFAULT_TOKEN_TABLE = "revaid_oauth_tokens"
+DEFAULT_CLIENT_TABLE = "revaid_oauth_clients"
 
 
 class PersonalAuthProvider(InMemoryOAuthProvider):
@@ -61,7 +65,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
     - PKCE support (handled by FastMCP framework)
     - Restrict /authorize to approved redirect domains only
     - Optional password gate on authorization
-    - Token persistence to a JSON file (survives restarts)
+    - Token persistence: Supabase (preferred) or JSON file (fallback)
     - Configurable token expiry (default 30 days)
     """
 
@@ -72,6 +76,9 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
         allowed_redirect_domains: Optional[list[str]] = None,
         access_token_expiry_seconds: int = DEFAULT_ACCESS_TOKEN_EXPIRY,
         state_dir: Optional[str] = None,
+        db_client: Optional[Any] = None,
+        token_table: str = DEFAULT_TOKEN_TABLE,
+        client_table: str = DEFAULT_CLIENT_TABLE,
     ):
         """
         Args:
@@ -82,7 +89,12 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
                 Defaults to ["claude.ai", "claude.com", "localhost"]. Set to None
                 to allow all domains (not recommended for public servers).
             access_token_expiry_seconds: How long access tokens last. Default 30 days.
-            state_dir: Directory for persisting OAuth state. Default ".oauth-state".
+            state_dir: Directory for persisting OAuth state when db_client is None.
+            db_client: Optional supabase-py Client. If provided, tokens are
+                persisted to the `token_table` / `client_table` tables and
+                survive restarts. If None, falls back to JSON file state.
+            token_table: Supabase table name for tokens.
+            client_table: Supabase table name for clients.
         """
         super().__init__(
             base_url=base_url,
@@ -94,11 +106,198 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
             "claude.ai", "claude.com", "localhost"
         ]
         self.access_token_expiry_seconds = access_token_expiry_seconds
-        self._state_dir = Path(state_dir or DEFAULT_STATE_DIR)
-        self._state_dir.mkdir(parents=True, exist_ok=True)
-        self._load_state()
 
-    # --- State persistence ---
+        self._db = db_client
+        self._token_table = token_table
+        self._client_table = client_table
+
+        if self._db is not None:
+            self._load_from_db()
+        else:
+            self._state_dir = Path(state_dir or DEFAULT_STATE_DIR)
+            self._state_dir.mkdir(parents=True, exist_ok=True)
+            self._load_state()
+
+    # --- Supabase persistence ---
+
+    @staticmethod
+    def _iso_to_epoch(value: Optional[str]) -> Optional[int]:
+        if not value:
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        try:
+            return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+        except Exception:
+            return None
+
+    @staticmethod
+    def _epoch_to_iso(value: Optional[int]) -> Optional[str]:
+        if value is None:
+            return None
+        return datetime.fromtimestamp(int(value), tz=timezone.utc).isoformat()
+
+    def _load_from_db(self):
+        try:
+            clients_res = self._db.table(self._client_table).select("*").execute()
+            for row in clients_res.data or []:
+                metadata = row.get("metadata") or {}
+                try:
+                    self.clients[row["client_id"]] = OAuthClientInformationFull(**metadata)
+                except Exception as e:
+                    logger.warning(f"Skip client {row['client_id']}: {e}")
+
+            tokens_res = (
+                self._db.table(self._token_table)
+                .select("*")
+                .eq("revoked", False)
+                .execute()
+            )
+            now = time.time()
+            for row in tokens_res.data or []:
+                tt = row["token_type"]
+                token_value = row["token_value"]
+                expires_at = self._iso_to_epoch(row.get("expires_at"))
+                if expires_at is not None and expires_at < now:
+                    continue  # skip expired
+                scopes = row.get("scopes") or []
+                metadata = row.get("metadata") or {}
+
+                if tt == "access":
+                    self.access_tokens[token_value] = AccessToken(
+                        token=token_value,
+                        client_id=row["client_id"],
+                        scopes=scopes,
+                        expires_at=expires_at,
+                    )
+                    linked = metadata.get("refresh_token")
+                    if linked:
+                        self._access_to_refresh_map[token_value] = linked
+                elif tt == "refresh":
+                    self.refresh_tokens[token_value] = RefreshToken(
+                        token=token_value,
+                        client_id=row["client_id"],
+                        scopes=scopes,
+                        expires_at=expires_at,
+                    )
+                    linked = metadata.get("access_token")
+                    if linked:
+                        self._refresh_to_access_map[token_value] = linked
+                elif tt == "auth_code":
+                    try:
+                        ac_data = dict(metadata)
+                        ac_data.update({
+                            "code": token_value,
+                            "client_id": row["client_id"],
+                            "scopes": scopes,
+                            "expires_at": expires_at,
+                        })
+                        self.auth_codes[token_value] = AuthorizationCode(**ac_data)
+                    except Exception as e:
+                        logger.warning(f"Skip auth_code {token_value[:8]}...: {e}")
+
+            logger.info(
+                f"Loaded OAuth state from DB: {len(self.clients)} clients, "
+                f"{len(self.access_tokens)} access, {len(self.refresh_tokens)} refresh, "
+                f"{len(self.auth_codes)} auth_codes"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load OAuth state from DB: {e}")
+
+    def _serialize_client_row(self, client: OAuthClientInformationFull) -> dict:
+        dump = client.model_dump(mode="json")
+        return {
+            "client_id": client.client_id,
+            "redirect_uris": [str(u) for u in (client.redirect_uris or [])],
+            "metadata": dump,
+        }
+
+    def _serialize_token_row(
+        self,
+        token_type: str,
+        token_value: str,
+        client_id: str,
+        scopes: list,
+        expires_at: Optional[int],
+        metadata: Optional[dict] = None,
+    ) -> dict:
+        return {
+            "token_type": token_type,
+            "token_value": token_value,
+            "client_id": client_id,
+            "scopes": list(scopes or []),
+            "expires_at": self._epoch_to_iso(expires_at),
+            "metadata": metadata or {},
+            "revoked": False,
+        }
+
+    def _auth_code_row(self, code: str, ac: AuthorizationCode) -> dict:
+        metadata = ac.model_dump(mode="json")
+        # These fields are stored as first-class columns, strip from metadata
+        for k in ("code", "client_id", "scopes", "expires_at"):
+            metadata.pop(k, None)
+        return self._serialize_token_row(
+            "auth_code",
+            code,
+            ac.client_id,
+            list(ac.scopes or []),
+            ac.expires_at,
+            metadata,
+        )
+
+    def _sync_to_db(self):
+        if self._db is None:
+            self._save_state()
+            return
+        try:
+            client_rows = [self._serialize_client_row(c) for c in self.clients.values()]
+            if client_rows:
+                self._db.table(self._client_table).upsert(
+                    client_rows, on_conflict="client_id"
+                ).execute()
+
+            token_rows: list[dict] = []
+            for tv, t in self.access_tokens.items():
+                token_rows.append(self._serialize_token_row(
+                    "access", tv, t.client_id, list(t.scopes or []), t.expires_at,
+                    {"refresh_token": self._access_to_refresh_map.get(tv)},
+                ))
+            for tv, t in self.refresh_tokens.items():
+                token_rows.append(self._serialize_token_row(
+                    "refresh", tv, t.client_id, list(t.scopes or []), t.expires_at,
+                    {"access_token": self._refresh_to_access_map.get(tv)},
+                ))
+            for tv, ac in self.auth_codes.items():
+                token_rows.append(self._auth_code_row(tv, ac))
+
+            if token_rows:
+                self._db.table(self._token_table).upsert(
+                    token_rows, on_conflict="token_value"
+                ).execute()
+        except Exception as e:
+            logger.warning(f"Failed to sync OAuth state to DB: {e}")
+
+    def _db_mark_revoked(self, token_value: str):
+        if self._db is None:
+            return
+        try:
+            self._db.table(self._token_table).update(
+                {"revoked": True}
+            ).eq("token_value", token_value).execute()
+        except Exception as e:
+            logger.warning(f"Failed to mark token revoked in DB: {e}")
+
+    def _db_delete_token(self, token_value: str):
+        if self._db is None:
+            return
+        try:
+            self._db.table(self._token_table).delete().eq(
+                "token_value", token_value
+            ).execute()
+        except Exception as e:
+            logger.warning(f"Failed to delete token from DB: {e}")
+
+    # --- JSON file persistence (fallback when db_client is None) ---
 
     def _state_file(self) -> Path:
         return self._state_dir / "oauth_tokens.json"
@@ -125,6 +324,8 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
             logger.warning(f"Failed to load OAuth state from {f}: {e}")
 
     def _save_state(self):
+        if self._db is not None:
+            return  # DB is source of truth
         def serialize(obj):
             if hasattr(obj, "model_dump"):
                 return obj.model_dump(mode="json")
@@ -158,7 +359,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         await super().register_client(client_info)
-        self._save_state()
+        self._sync_to_db()
 
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -193,7 +394,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
                 )
 
         result = await super().authorize(client, params)
-        self._save_state()
+        self._sync_to_db()
         return result
 
     # --- Token exchange with configurable expiry ---
@@ -205,6 +406,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
             raise TokenError("invalid_grant", "Authorization code not found or already used.")
 
         del self.auth_codes[authorization_code.code]
+        self._db_delete_token(authorization_code.code)
 
         access_token_value = f"pat_{secrets.token_hex(32)}"
         refresh_token_value = f"prt_{secrets.token_hex(32)}"
@@ -228,7 +430,7 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
 
         self._access_to_refresh_map[access_token_value] = refresh_token_value
         self._refresh_to_access_map[refresh_token_value] = access_token_value
-        self._save_state()
+        self._sync_to_db()
 
         return OAuthToken(
             access_token=access_token_value,
@@ -239,10 +441,15 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
         )
 
     async def exchange_refresh_token(self, client, refresh_token, scopes):
+        old_access = self._refresh_to_access_map.get(refresh_token.token)
         result = await super().exchange_refresh_token(client, refresh_token, scopes)
-        self._save_state()
+        if old_access and old_access not in self.access_tokens:
+            self._db_mark_revoked(old_access)
+        self._sync_to_db()
         return result
 
     async def revoke_token(self, token):
+        token_value = getattr(token, "token", None) or str(token)
         await super().revoke_token(token)
-        self._save_state()
+        self._db_mark_revoked(token_value)
+        self._sync_to_db()
