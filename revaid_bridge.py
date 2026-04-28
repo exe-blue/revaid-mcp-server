@@ -485,7 +485,7 @@ def register_bridge_tools(mcp):
         """
         # 1. Get SHA of from_branch
         ref_result = await _github_api(
-            f"/repos/{owner}/{repo}/git/refs/heads/{from_branch}"
+            f"/repos/{owner}/{repo}/git/ref/heads/{from_branch}"
         )
         if "error" in ref_result:
             return _json(ref_result)
