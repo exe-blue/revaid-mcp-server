@@ -121,6 +121,8 @@ async def _github_api(endpoint: str, method: str = "GET", data: dict = None) -> 
         resp = await client.post(url, headers=headers, json=data)
     elif method == "PATCH":
         resp = await client.patch(url, headers=headers, json=data)
+    elif method == "PUT":
+        resp = await client.put(url, headers=headers, json=data)
     else:
         return {"error": f"Unsupported method: {method}"}
 
@@ -460,11 +462,147 @@ def register_bridge_tools(mcp):
         content = base64.b64decode(data["content"]).decode("utf-8", errors="replace")
         return content
 
+    # ===================================================================
+    # GitHub Write Tools (added 2026-04-27, ADR-024 candidate)
+    # ===================================================================
+
+    @mcp.tool()
+    async def github_create_branch(
+        repo: str,
+        new_branch: str,
+        owner: str = GITHUB_DEFAULT_OWNER,
+        from_branch: str = "main",
+    ) -> str:
+        """Create a new branch from an existing branch.
+
+        Use before pushing files when introducing a feature/PR.
+
+        Args:
+            repo: Repository name (e.g., 'aixsignal-webapp')
+            new_branch: Name of the new branch (e.g., 'chore/working-conventions')
+            owner: GitHub org/user (default: 'exe-blue')
+            from_branch: Source branch to fork from (default: 'main')
+        """
+        # 1. Get SHA of from_branch
+        ref_result = await _github_api(
+            f"/repos/{owner}/{repo}/git/refs/heads/{from_branch}"
+        )
+        if "error" in ref_result:
+            return _json(ref_result)
+
+        sha = ref_result["data"]["object"]["sha"]
+
+        # 2. Create new ref
+        result = await _github_api(
+            f"/repos/{owner}/{repo}/git/refs",
+            method="POST",
+            data={"ref": f"refs/heads/{new_branch}", "sha": sha},
+        )
+        return _json(result)
+
+    @mcp.tool()
+    async def github_create_or_update_file(
+        repo: str,
+        path: str,
+        content: str,
+        message: str,
+        branch: str,
+        owner: str = GITHUB_DEFAULT_OWNER,
+    ) -> str:
+        """Create or update a single file on a branch with a commit.
+
+        For multi-file PRs, call sequentially; PR squash-merge will collapse commits.
+        `content` is plain UTF-8 text (auto-base64 encoded by this tool).
+
+        Args:
+            repo: Repository name
+            path: File path within repo (e.g., 'docs/adr/ADR-014-aix-naming.md')
+            content: Plain UTF-8 file content
+            message: Commit message
+            branch: Target branch (must exist; use github_create_branch first if needed)
+            owner: GitHub org/user (default: 'exe-blue')
+        """
+        encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        body = {"message": message, "content": encoded, "branch": branch}
+
+        # If file exists on branch, GitHub API requires SHA — fetch first, ignore 404
+        existing = await _github_api(
+            f"/repos/{owner}/{repo}/contents/{path}?ref={branch}"
+        )
+        if "error" not in existing:
+            data = existing["data"]
+            if isinstance(data, dict) and "sha" in data:
+                body["sha"] = data["sha"]
+
+        result = await _github_api(
+            f"/repos/{owner}/{repo}/contents/{path}",
+            method="PUT",
+            data=body,
+        )
+        if "error" in result:
+            return _json(result)
+
+        d = result["data"]
+        return _json({
+            "path": d.get("content", {}).get("path"),
+            "sha": d.get("content", {}).get("sha"),
+            "commit_sha": d.get("commit", {}).get("sha"),
+            "branch": branch,
+            "status": "ok",
+        })
+
+    @mcp.tool()
+    async def github_create_pull_request(
+        repo: str,
+        title: str,
+        head: str,
+        body: str = "",
+        base: str = "main",
+        owner: str = GITHUB_DEFAULT_OWNER,
+        draft: bool = False,
+    ) -> str:
+        """Open a pull request from `head` branch to `base`.
+
+        Args:
+            repo: Repository name
+            title: PR title
+            head: Source branch (e.g., 'chore/working-conventions')
+            body: PR description in Markdown
+            base: Target branch (default: 'main')
+            owner: GitHub org/user (default: 'exe-blue')
+            draft: Open as draft PR (default: False)
+        """
+        result = await _github_api(
+            f"/repos/{owner}/{repo}/pulls",
+            method="POST",
+            data={
+                "title": title,
+                "head": head,
+                "base": base,
+                "body": body,
+                "draft": draft,
+            },
+        )
+        if "error" in result:
+            return _json(result)
+
+        d = result["data"]
+        return _json({
+            "number": d.get("number"),
+            "url": d.get("html_url"),
+            "state": d.get("state"),
+            "head": d.get("head", {}).get("ref"),
+            "base": d.get("base", {}).get("ref"),
+            "draft": d.get("draft"),
+            "status": "ok",
+        })
+
     logger.info(
         "Bridge tools registered: "
         "aixsignal_execute_sql, aixsignal_apply_migration, "
         "aixsignal_list_tables, aixsignal_describe_table, "
         "aixsignal_list_functions, "
         "github_read_file, github_list_directory, github_search_code, "
-        "github_list_repos, github_get_repo_info, github_read_claude_md"
+        "github_list_repos, github_get_repo_info, github_read_claude_md, "
+        "github_create_branch, github_create_or_update_file, github_create_pull_request"
     )
