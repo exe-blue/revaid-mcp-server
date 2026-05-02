@@ -358,6 +358,12 @@ class PersonalAuthProvider(InMemoryOAuthProvider):
             return False
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        # If client did not declare scopes, default to "mcp" so that authorize()
+        # does not fail with invalid_scope when clients (Claude, ChatGPT, Codex)
+        # request scope=mcp during the OAuth flow. RFC 7591 allows the AS to
+        # assign default scopes when the client omits them.
+        if not getattr(client_info, "scope", None):
+            client_info.scope = "mcp openid profile email offline_access"
         await super().register_client(client_info)
         self._sync_to_db()
 
