@@ -1133,7 +1133,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 45 (13 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness + 1 v8.1 ruon.ai Bridge)")
+    logger.info("   Tools: 45 (13 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness + 1 v8.1 ruon.ai Bridge)")
 
     mcp.run(
         transport="streamable-http",
