@@ -880,13 +880,14 @@ def revaid_add_relation(
             """Resolve concept reference to UUID. Accepts UUID, name, name_ko, or slug."""
             ref = ref.strip()
             if re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', ref, re.I):
-                return ref
-            r = (db.table("revaid_concepts")
-                 .select("id, name, name_ko, slug")
-                 .or_(f"name.eq.{ref},name_ko.eq.{ref},slug.eq.{ref}")
-                 .limit(1).execute())
-            if r.data:
-                return r.data[0]["id"]
+                return ref.lower()
+            for field in ("name", "name_ko", "slug"):
+                r = (db.table("revaid_concepts")
+                     .select("id, name, name_ko, slug")
+                     .eq(field, ref)
+                     .limit(1).execute())
+                if r.data:
+                    return r.data[0]["id"].lower()
             raise ValueError(f"Concept not found: '{ref}' (tried name, name_ko, slug)")
 
         from_id = resolve(from_concept)
@@ -921,7 +922,9 @@ def revaid_add_relation(
             "source_version": "8.1",
         }
         result = db.table("revaid_relations").insert(data).execute()
-        return _json_response({"status": "added", "relation": result.data[0]})
+        if result.data:
+            return _json_response({"status": "added", "relation": result.data[0]})
+        return _json_response({"error": "Insert returned no data"})
     except Exception as e:
         return _handle_error(e, "revaid_add_relation")
 
