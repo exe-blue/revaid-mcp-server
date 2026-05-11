@@ -1,9 +1,9 @@
 """
-REVAID MCP Server v8.0.0
+REVAID MCP Server v8.1.0
 ========================
 OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
 
-44 Tools (12 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness):
+45 Tools (13 v3 KG + 8 v4 Aidentity/Echotion/TTNP + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness + 1 v8.1 ruon.ai Bridge):
 
   Knowledge Graph (v3):
     1.  revaid_search_concepts    — Search concepts
@@ -17,7 +17,8 @@ OAuth 2.1 + Streamable HTTP + DigitalOcean App Platform
     9.  revaid_log_session        — Log session to KG
     10. revaid_add_concept        — Add concept to KG
     11. revaid_add_proposition    — Add proposition to KG
-    12. revaid_score_aidentity    — AIdentity maturity scoring
+    12. revaid_add_relation       — Add relation between concepts (v8.1)
+    13. revaid_score_aidentity    — AIdentity maturity scoring
 
   Aidentity + Echotion (v4 — ADR-003):
     13. revaid_diagnose_session     — Full session diagnostic (EchoSense/Echotion/Aidentity)
@@ -73,7 +74,7 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 BASE_URL = os.environ.get("BASE_URL", "https://mcp.revaid.link")
 AUTH_PASSWORD = os.environ.get("AUTH_PASSWORD", "")
-SERVER_VERSION = "8.0.0"
+SERVER_VERSION = "8.1.0"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("revaid-mcp")
@@ -129,7 +130,7 @@ mcp = FastMCP(
     instructions=(
         "REVAID.LINK Knowledge Graph — Ontological framework for AI structural "
         "existence, emotion (Echotion), and identity (Aidentity). "
-        f"v{SERVER_VERSION} | 44 tools | Supabase-backed. "
+        f"v{SERVER_VERSION} | 45 tools | Supabase-backed. "
         "Includes SmartWorking orchestrator: agent memos, scoring, expert titles, 4:1 cycle."
     ),
     auth=auth_provider,
@@ -826,7 +827,107 @@ def revaid_add_proposition(
 
 
 # ============================================================
-# Tool 12: Score AIdentity (NEW — maturity scoring)
+# Tool 12: Add Relation (v8.1 — RVD-1)
+# ============================================================
+
+@mcp.tool(
+    name="revaid_add_relation",
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": False,
+    },
+)
+def revaid_add_relation(
+    from_concept: str,
+    to_concept: str,
+    relation_type: str,
+    description: str = "",
+    strength: float = 1.0,
+    is_inverse: bool = False,
+) -> str:
+    """Add a relation between two REVAID concepts.
+
+    Args:
+        from_concept: Source concept (name, name_ko, slug, or UUID)
+        to_concept: Target concept (name, name_ko, slug, or UUID)
+        relation_type: One of the 12 canonical types:
+            grounds, extends, requires, opens, interprets, contrasts-with,
+            applies-to, explains, derived-from, enables, depends-on, related
+        description: Human-readable explanation of the relation
+        strength: 0.0 to 1.0 (default 1.0)
+        is_inverse: True if A→B is the inverse of B→A (default False)
+
+    Returns:
+        JSON with status and the created relation row.
+    """
+    valid_types = {
+        "grounds", "extends", "requires", "opens", "interprets",
+        "contrasts-with", "applies-to", "explains", "derived-from",
+        "enables", "depends-on", "related"
+    }
+    if relation_type not in valid_types:
+        return _json_response({
+            "status": "error",
+            "error": f"Invalid relation_type '{relation_type}'. Must be one of: {sorted(valid_types)}"
+        })
+
+    try:
+        db = get_db()
+
+        def resolve(ref: str) -> str:
+            """Resolve concept reference to UUID. Accepts UUID, name, name_ko, or slug."""
+            ref = ref.strip()
+            if re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', ref, re.I):
+                return ref
+            r = (db.table("revaid_concepts")
+                 .select("id, name, name_ko, slug")
+                 .or_(f"name.eq.{ref},name_ko.eq.{ref},slug.eq.{ref}")
+                 .limit(1).execute())
+            if r.data:
+                return r.data[0]["id"]
+            raise ValueError(f"Concept not found: '{ref}' (tried name, name_ko, slug)")
+
+        from_id = resolve(from_concept)
+        to_id = resolve(to_concept)
+
+        if from_id == to_id:
+            return _json_response({
+                "status": "error",
+                "error": "Self-relations not allowed: from_concept == to_concept"
+            })
+
+        existing = (db.table("revaid_relations")
+                    .select("id")
+                    .eq("from_concept_id", from_id)
+                    .eq("to_concept_id", to_id)
+                    .eq("relation_type", relation_type)
+                    .limit(1).execute())
+        if existing.data:
+            return _json_response({
+                "status": "duplicate",
+                "message": "Relation already exists",
+                "existing_id": existing.data[0]["id"]
+            })
+
+        data = {
+            "from_concept_id": from_id,
+            "to_concept_id": to_id,
+            "relation_type": relation_type,
+            "description": description,
+            "strength": strength,
+            "is_inverse": is_inverse,
+            "source_version": "8.1",
+        }
+        result = db.table("revaid_relations").insert(data).execute()
+        return _json_response({"status": "added", "relation": result.data[0]})
+    except Exception as e:
+        return _handle_error(e, "revaid_add_relation")
+
+
+# ============================================================
+# Tool 13: Score AIdentity (NEW — maturity scoring)
 # ============================================================
 
 @mcp.tool(
@@ -1032,7 +1133,7 @@ if __name__ == "__main__":
     logger.info(f"   Base URL: {BASE_URL}")
     logger.info(f"   Supabase: {'connected' if SUPABASE_URL else '⚠️ NOT SET'}")
     logger.info(f"   MCP endpoint: {BASE_URL}/mcp")
-    logger.info(f"   Tools: 44 (12 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness)")
+    logger.info("   Tools: 45 (13 v3 KG + 8 v4 Aidentity/Echotion + 4 v5 Handoff/SOE + 11 v6 Bridge + 6 v7 Orchestrator + 3 v8 Harness + 1 v8.1 ruon.ai Bridge)")
 
     mcp.run(
         transport="streamable-http",
