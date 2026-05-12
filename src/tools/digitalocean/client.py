@@ -27,14 +27,6 @@ _client: Optional[httpx.AsyncClient] = None
 _client_lock = asyncio.Lock()
 
 
-class DOError(Exception):
-    """Raised when the DigitalOcean API returns a non-2xx response."""
-
-    def __init__(self, payload: dict):
-        self.payload = payload
-        super().__init__(payload.get("message", "DigitalOcean API error"))
-
-
 def _require_token() -> str:
     token = os.environ.get(TOKEN_ENV_VAR, "").strip()
     if not token:
@@ -106,6 +98,16 @@ def _missing_param_error(name: str) -> dict:
         "error": True,
         "status_code": 400,
         "message": f"'{name}' is required",
+        "request_id": None,
+        "do_error_id": None,
+    }
+
+
+def _invalid_param_error(name: str, reason: str) -> dict:
+    return {
+        "error": True,
+        "status_code": 400,
+        "message": f"'{name}' {reason}",
         "request_id": None,
         "do_error_id": None,
     }
@@ -217,6 +219,7 @@ async def _request(
     *,
     query: Optional[Mapping[str, Any]] = None,
     json_body: Optional[Mapping[str, Any]] = None,
+    timeout: Optional[float] = None,
 ) -> dict:
     """Send a request, handle 429 with one retry, normalize response to dict."""
     client = await _get_client()
@@ -225,6 +228,8 @@ async def _request(
         request_kwargs["params"] = dict(query)
     if json_body is not None:
         request_kwargs["json"] = dict(json_body)
+    if timeout is not None:
+        request_kwargs["timeout"] = timeout
     return await _send_with_retry(client, method, path, request_kwargs)
 
 
@@ -242,8 +247,9 @@ async def _do_post(
     token: str,
     *,
     json_body: Optional[Mapping[str, Any]] = None,
+    timeout: Optional[float] = None,
 ) -> dict:
-    return await _request("POST", path, token, json_body=json_body)
+    return await _request("POST", path, token, json_body=json_body, timeout=timeout)
 
 
 async def _do_delete(path: str, token: str) -> dict:

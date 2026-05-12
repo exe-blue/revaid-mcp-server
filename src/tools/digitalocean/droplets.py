@@ -15,6 +15,7 @@ from .client import (
     _do_get,
     _do_post,
     _ensure_required,
+    _invalid_param_error,
     _require_token,
     _safe_call_error,
 )
@@ -35,6 +36,21 @@ _CREATE_FIELDS = (
     "vpc_uuid",
 )
 _CREATE_REQUIRED = ("name", "region", "size", "image", "ssh_keys")
+_CREATE_TIMEOUT_SECONDS = 60.0
+
+
+def _parse_droplet_id(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        droplet_id = value
+    elif isinstance(value, str) and value.isdigit():
+        droplet_id = int(value)
+    else:
+        return None
+    if droplet_id <= 0:
+        return None
+    return droplet_id
 
 
 async def do_list_droplets(params: dict) -> dict:
@@ -71,7 +87,10 @@ async def do_get_droplet(params: dict) -> dict:
         token = _require_token()
         if err := _ensure_required(params, ("droplet_id",)):
             return err
-        return await _do_get(f"/droplets/{params['droplet_id']}", token)
+        droplet_id = _parse_droplet_id(params.get("droplet_id"))
+        if droplet_id is None:
+            return _invalid_param_error("droplet_id", "must be a positive integer")
+        return await _do_get(f"/droplets/{droplet_id}", token)
     except Exception as exc:
         return _safe_call_error("do_get_droplet", exc)
 
@@ -102,7 +121,7 @@ async def do_create_droplet(params: dict) -> dict:
         if err := _ensure_required(params, _CREATE_REQUIRED):
             return err
         body = _build_body(params, fields=_CREATE_FIELDS)
-        return await _do_post("/droplets", token, json_body=body)
+        return await _do_post("/droplets", token, json_body=body, timeout=_CREATE_TIMEOUT_SECONDS)
     except Exception as exc:
         return _safe_call_error("do_create_droplet", exc)
 
@@ -120,7 +139,10 @@ async def do_delete_droplet(params: dict) -> dict:
         token = _require_token()
         if err := _ensure_required(params, ("droplet_id",)):
             return err
-        return await _do_delete(f"/droplets/{params['droplet_id']}", token)
+        droplet_id = _parse_droplet_id(params.get("droplet_id"))
+        if droplet_id is None:
+            return _invalid_param_error("droplet_id", "must be a positive integer")
+        return await _do_delete(f"/droplets/{droplet_id}", token)
     except Exception as exc:
         return _safe_call_error("do_delete_droplet", exc)
 

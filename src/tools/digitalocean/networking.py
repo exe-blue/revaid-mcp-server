@@ -4,12 +4,15 @@ Phase 2 — Domain record tools.
 
 from __future__ import annotations
 
+import re
+
 from .client import (
     _build_body,
     _build_query,
     _do_get,
     _do_post,
     _ensure_required,
+    _invalid_param_error,
     _require_token,
     _safe_call_error,
 )
@@ -28,6 +31,18 @@ _RECORD_FIELDS = (
     "tag",
 )
 _CREATE_REQUIRED = ("domain", "type", "name", "data")
+_DOMAIN_RE = re.compile(
+    r"^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$"
+)
+
+
+def _normalize_domain(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    domain = value.strip().lower()
+    if not domain or not _DOMAIN_RE.fullmatch(domain):
+        return None
+    return domain
 
 
 async def do_list_domain_records(params: dict) -> dict:
@@ -49,8 +64,11 @@ async def do_list_domain_records(params: dict) -> dict:
         token = _require_token()
         if err := _ensure_required(params, ("domain",)):
             return err
+        domain = _normalize_domain(params.get("domain"))
+        if domain is None:
+            return _invalid_param_error("domain", "must be a valid domain name")
         query = _build_query(params, allowed=_LIST_QUERY)
-        return await _do_get(f"/domains/{params['domain']}/records", token, params=query)
+        return await _do_get(f"/domains/{domain}/records", token, params=query)
     except Exception as exc:
         return _safe_call_error("do_list_domain_records", exc)
 
@@ -79,8 +97,11 @@ async def do_create_domain_record(params: dict) -> dict:
         token = _require_token()
         if err := _ensure_required(params, _CREATE_REQUIRED):
             return err
+        domain = _normalize_domain(params.get("domain"))
+        if domain is None:
+            return _invalid_param_error("domain", "must be a valid domain name")
         body = _build_body(params, fields=_RECORD_FIELDS)
-        return await _do_post(f"/domains/{params['domain']}/records", token, json_body=body)
+        return await _do_post(f"/domains/{domain}/records", token, json_body=body)
     except Exception as exc:
         return _safe_call_error("do_create_domain_record", exc)
 
