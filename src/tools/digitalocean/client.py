@@ -101,6 +101,26 @@ def _build_body(
     return out
 
 
+def _missing_param_error(name: str) -> dict:
+    return {
+        "error": True,
+        "status_code": 400,
+        "message": f"'{name}' is required",
+        "request_id": None,
+        "do_error_id": None,
+    }
+
+
+def _ensure_required(params: Optional[Mapping[str, Any]], required: Iterable[str]) -> Optional[dict]:
+    """Return a 400 error dict if any required field is missing/empty, else None."""
+    data = params or {}
+    for name in required:
+        value = data.get(name)
+        if value is None or value == "" or value == []:
+            return _missing_param_error(name)
+    return None
+
+
 def _format_error(resp: httpx.Response) -> dict:
     request_id = resp.headers.get("x-request-id") or resp.headers.get("ratelimit-request-id")
     payload: dict = {
@@ -125,70 +145,61 @@ def _format_error(resp: httpx.Response) -> dict:
     return payload
 
 
-async def _request(
+def _transport_error(message: str) -> dict:
+    return {
+        "error": True,
+        "status_code": 0,
+        "message": f"DigitalOcean {message}",
+        "request_id": None,
+        "do_error_id": None,
+    }
+
+
+def _retry_wait_seconds(resp: httpx.Response) -> float:
+    raw = resp.headers.get("Retry-After", "1")
+    try:
+        wait = float(raw)
+    except ValueError:
+        wait = 1.0
+    return max(0.0, min(wait, 30.0))
+
+
+def _normalize_response(resp: httpx.Response) -> dict:
+    if resp.status_code == 204 or not resp.content:
+        return {"status_code": resp.status_code, "data": None}
+    if 200 <= resp.status_code < 300:
+        try:
+            body = resp.json()
+        except ValueError:
+            return {"status_code": resp.status_code, "data": resp.text}
+        if isinstance(body, dict):
+            return body
+        return {"status_code": resp.status_code, "data": body}
+    return _format_error(resp)
+
+
+async def _send_with_retry(
+    client: httpx.AsyncClient,
     method: str,
     path: str,
-    token: str,
-    *,
-    query: Optional[Mapping[str, Any]] = None,
-    json_body: Optional[Mapping[str, Any]] = None,
-    timeout: Optional[float] = None,
+    request_kwargs: dict,
 ) -> dict:
-    """Send a request, handle 429 with one retry, normalize response to dict."""
-    client = await _get_client()
-    headers = {"Authorization": f"Bearer {token}"}
-    request_kwargs: dict = {"headers": headers}
-    if query:
-        request_kwargs["params"] = dict(query)
-    if json_body is not None:
-        request_kwargs["json"] = dict(json_body)
-    if timeout is not None:
-        request_kwargs["timeout"] = timeout
-
+    """Issue request with one retry on 429. Returns the final normalized dict."""
     for attempt in (1, 2):
         try:
             resp = await client.request(method, path, **request_kwargs)
         except httpx.TimeoutException as exc:
-            return {
-                "error": True,
-                "status_code": 0,
-                "message": f"DigitalOcean request timed out: {exc}",
-                "request_id": None,
-                "do_error_id": None,
-            }
+            return _transport_error(f"request timed out: {exc}")
         except httpx.HTTPError as exc:
-            return {
-                "error": True,
-                "status_code": 0,
-                "message": f"DigitalOcean transport error: {exc}",
-                "request_id": None,
-                "do_error_id": None,
-            }
+            return _transport_error(f"transport error: {exc}")
 
         if resp.status_code == 429 and attempt == 1:
-            retry_after = resp.headers.get("Retry-After", "1")
-            try:
-                wait = float(retry_after)
-            except ValueError:
-                wait = 1.0
-            wait = max(0.0, min(wait, 30.0))
+            wait = _retry_wait_seconds(resp)
             logger.warning("DigitalOcean rate limit hit; sleeping %.2fs before retry", wait)
             await asyncio.sleep(wait)
             continue
 
-        if resp.status_code == 204 or not resp.content:
-            return {"status_code": resp.status_code, "data": None}
-
-        if 200 <= resp.status_code < 300:
-            try:
-                body = resp.json()
-            except ValueError:
-                return {"status_code": resp.status_code, "data": resp.text}
-            if isinstance(body, dict):
-                return body
-            return {"status_code": resp.status_code, "data": body}
-
-        return _format_error(resp)
+        return _normalize_response(resp)
 
     return {
         "error": True,
@@ -199,14 +210,31 @@ async def _request(
     }
 
 
+async def _request(
+    method: str,
+    path: str,
+    token: str,
+    *,
+    query: Optional[Mapping[str, Any]] = None,
+    json_body: Optional[Mapping[str, Any]] = None,
+) -> dict:
+    """Send a request, handle 429 with one retry, normalize response to dict."""
+    client = await _get_client()
+    request_kwargs: dict = {"headers": {"Authorization": f"Bearer {token}"}}
+    if query:
+        request_kwargs["params"] = dict(query)
+    if json_body is not None:
+        request_kwargs["json"] = dict(json_body)
+    return await _send_with_retry(client, method, path, request_kwargs)
+
+
 async def _do_get(
     path: str,
     token: str,
     *,
     params: Optional[Mapping[str, Any]] = None,
-    timeout: Optional[float] = None,
 ) -> dict:
-    return await _request("GET", path, token, query=params, timeout=timeout)
+    return await _request("GET", path, token, query=params)
 
 
 async def _do_post(
@@ -214,18 +242,12 @@ async def _do_post(
     token: str,
     *,
     json_body: Optional[Mapping[str, Any]] = None,
-    timeout: Optional[float] = None,
 ) -> dict:
-    return await _request("POST", path, token, json_body=json_body, timeout=timeout)
+    return await _request("POST", path, token, json_body=json_body)
 
 
-async def _do_delete(
-    path: str,
-    token: str,
-    *,
-    timeout: Optional[float] = None,
-) -> dict:
-    return await _request("DELETE", path, token, timeout=timeout)
+async def _do_delete(path: str, token: str) -> dict:
+    return await _request("DELETE", path, token)
 
 
 def _safe_call_error(tool_name: str, exc: Exception) -> dict:
