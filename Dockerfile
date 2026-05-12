@@ -16,6 +16,7 @@ RUN curl -fsSL -o personal_auth.py \
 
 # Copy application code
 COPY *.py ./
+COPY src/ ./src/
 
 # Create OAuth state directory
 RUN mkdir -p .oauth-state
