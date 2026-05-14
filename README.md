@@ -121,6 +121,103 @@ curl -s https://mcp.revaid.link/.well-known/oauth-protected-resource/mcp | pytho
 4. 토큰 30일 유효, refresh로 갱신 가능
 5. 토큰 파일 .oauth-state/에 저장 — 서버 재시작해도 유지
 
+## DigitalOcean SSH Execution (`do_ssh_exec`)
+
+`do_ssh_exec` runs a single command or uploads-and-runs a multiline bash
+script on a DigitalOcean droplet over SSH. It is the entry point for
+all server-side automation (Caddy patches, n8n workflow deploys,
+debugging) that the DO REST API does not expose.
+
+### Security model — deny-all by default
+
+| Control | Behaviour |
+|---|---|
+| `DO_SSH_ALLOWED_HOSTS` | Comma-separated allowlist. **Empty = every call rejected.** |
+| Private key | Loaded from `DO_SSH_PRIVATE_KEY_PEM` (inline) or `DO_SSH_PRIVATE_KEY_PATH` (file). One must be set. |
+| Host key check | Strict against `DO_SSH_KNOWN_HOSTS_PATH` (default `/etc/revaid-mcp/known_hosts`). Set `DO_SSH_TOFU=true` only for bootstrap. |
+| Command / script size | 10 KB max. |
+| stdout / stderr | 1 MB each; excess is truncated with a marker. |
+| Timeout | Default 60 s, hard cap 600 s. |
+| Concurrency | 5 simultaneous SSH sessions. |
+| Audit | Every call → logger `revaid.audit.ssh` (host, mode, exit, duration, first 200 chars of command). Key material is never logged. |
+
+### ORIGIN-side setup
+
+```bash
+# 1. Inject private key (chmod 600 mandatory)
+cat > /etc/revaid-mcp/ssh_key.pem <<'EOF'
+-----BEGIN OPENSSH PRIVATE KEY-----
+<paste full PEM here>
+-----END OPENSSH PRIVATE KEY-----
+EOF
+chmod 600 /etc/revaid-mcp/ssh_key.pem
+
+# 2. Register env vars
+cat >> /etc/revaid-mcp/secrets.env <<'EOF'
+DO_SSH_PRIVATE_KEY_PATH=/etc/revaid-mcp/ssh_key.pem
+DO_SSH_ALLOWED_HOSTS=159.223.80.77,n8n.aixsignal.pro
+DO_SSH_KNOWN_HOSTS_PATH=/etc/revaid-mcp/known_hosts
+EOF
+chmod 600 /etc/revaid-mcp/secrets.env
+
+# 3. Seed known_hosts with target host fingerprints
+ssh-keyscan -H 159.223.80.77 >> /etc/revaid-mcp/known_hosts
+chmod 644 /etc/revaid-mcp/known_hosts
+
+# 4. Restart
+systemctl restart revaid-mcp
+```
+
+### Usage
+
+Single command (droplet id auto-resolves to public IPv4):
+
+```json
+{
+  "tool": "do_ssh_exec",
+  "params": {
+    "droplet_id": 570463287,
+    "command": "uname -a && whoami && date -Iseconds"
+  }
+}
+```
+
+Multiline script (uploaded to `/tmp/revaid_<uuid>.sh`, executed, removed):
+
+```json
+{
+  "tool": "do_ssh_exec",
+  "params": {
+    "host": "159.223.80.77",
+    "user": "root",
+    "script": "#!/bin/bash\nset -euo pipefail\napt-get update\napt-get install -y jq",
+    "timeout": 300
+  }
+}
+```
+
+Response shape:
+
+```json
+{
+  "exit_code": 0,
+  "stdout": "...",
+  "stderr": "",
+  "duration_seconds": 1.823,
+  "host": "159.223.80.77",
+  "executed_at": "2026-05-14T01:23:45+00:00",
+  "stdout_truncated": false,
+  "stderr_truncated": false
+}
+```
+
+Error responses include `error: true`, `status_code`, `message`. Common rejects:
+
+* `host X not in DO_SSH_ALLOWED_HOSTS` (403) — extend the allowlist.
+* `DO_SSH_ALLOWED_HOSTS is not set; do_ssh_exec is deny-all` (403) — configure first.
+* `do_ssh_exec disabled: neither DO_SSH_PRIVATE_KEY_PEM nor ..._PATH is set` (503).
+* `timeout after Ns` (returned as `{exit_code: -1, timed_out: true}`).
+
 ## 트러블슈팅
 
 **"Failed to generate authorization URL" on claude.ai**

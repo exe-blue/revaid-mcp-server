@@ -250,6 +250,25 @@ async def _do_delete(path: str, token: str) -> dict:
     return await _request("DELETE", path, token)
 
 
+async def resolve_droplet_ip(droplet_id: int, token: str) -> str:
+    """Fetch the public IPv4 address for a droplet via the DO API.
+
+    Raises RuntimeError on API/transport error and ValueError if the
+    droplet has no public IPv4 (or doesn't exist).
+    """
+    payload = await _do_get(f"/droplets/{droplet_id}", token)
+    if payload.get("error"):
+        raise RuntimeError(payload.get("message") or "DigitalOcean API error")
+    droplet = payload.get("droplet")
+    if not isinstance(droplet, dict):
+        raise ValueError(f"droplet {droplet_id} not found")
+    v4 = droplet.get("networks", {}).get("v4", []) or []
+    public = next((n for n in v4 if n.get("type") == "public"), None)
+    if not public or not public.get("ip_address"):
+        raise ValueError(f"droplet {droplet_id} has no public IPv4 address")
+    return public["ip_address"]
+
+
 def _safe_call_error(tool_name: str, exc: Exception) -> dict:
     """Convert an unexpected exception into a structured tool error.
 
