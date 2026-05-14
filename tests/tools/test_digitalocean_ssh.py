@@ -20,13 +20,13 @@ import pytest
 # the module guards the import and exposes _ASYNCSSH_AVAILABLE for tests.
 from src.tools.digitalocean import ssh as ssh_module
 
-# Reserved documentation IPs used purely as test fixtures. The strings
-# are referenced from many tests, so collecting them here both deduplicates
-# the literals and quiets static analysers about hardcoded addresses.
-_ALLOWED_HOST = "1.2.3.4"
-_ALLOWED_HOST_2 = "5.6.7.8"
-_DENIED_HOST = "8.8.8.8"
-_RESOLVED_HOST = "9.9.9.9"
+# Reserved documentation / placeholder IPs used purely as test fixtures.
+# Centralised here so the literals appear once and obvious test-only intent
+# is clear. NOSONAR suppressions document that S1313 is acknowledged.
+_ALLOWED_HOST = "1.2.3.4"  # NOSONAR S1313 — test fixture only
+_ALLOWED_HOST_2 = "5.6.7.8"  # NOSONAR S1313 — test fixture only
+_DENIED_HOST = "8.8.8.8"  # NOSONAR S1313 — test fixture only
+_RESOLVED_HOST = "9.9.9.9"  # NOSONAR S1313 — test fixture only
 
 
 # ---- helpers ---------------------------------------------------------------
