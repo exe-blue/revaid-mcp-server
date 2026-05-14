@@ -163,6 +163,17 @@ async def test_command_and_script_conflict(stub_asyncssh, env_minimal):
 
 
 @pytest.mark.asyncio
+async def test_empty_command_and_script_conflict(stub_asyncssh, env_minimal):
+    result = await ssh_module.do_ssh_exec({
+        "host": "1.2.3.4",
+        "command": "",
+        "script": "echo b",
+    })
+    assert result.get("error") is True
+    assert "only one" in result["message"]
+
+
+@pytest.mark.asyncio
 async def test_command_size_limit(stub_asyncssh, env_minimal):
     huge = "x" * (ssh_module.MAX_COMMAND_BYTES + 1)
     result = await ssh_module.do_ssh_exec({
@@ -204,6 +215,19 @@ async def test_timeout_clamped_to_max(stub_asyncssh, env_minimal):
     })
     call_kwargs = conn.run.call_args.kwargs
     assert call_kwargs["timeout"] == ssh_module.MAX_TIMEOUT_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_zero_timeout_rejected(stub_asyncssh, env_minimal):
+    stub_asyncssh.connect = MagicMock()
+    result = await ssh_module.do_ssh_exec({
+        "host": "1.2.3.4",
+        "command": "echo hello",
+        "timeout": 0,
+    })
+    assert result.get("error") is True
+    assert result["message"] == "'timeout' must be positive"
+    stub_asyncssh.connect.assert_not_called()
 
 
 @pytest.mark.asyncio

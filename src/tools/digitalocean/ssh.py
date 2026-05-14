@@ -194,9 +194,9 @@ async def do_ssh_exec(params: dict) -> dict:
 
     command = p.get("command")
     script = p.get("script")
-    if command and script:
+    if command is not None and script is not None:
         return _error("provide only one of 'command' or 'script', not both")
-    if not command and not script:
+    if command is None and script is None:
         return _error("either 'command' or 'script' is required")
 
     body = command if command is not None else script
@@ -209,12 +209,18 @@ async def do_ssh_exec(params: dict) -> dict:
         )
 
     user = (p.get("user") or "root").strip() or "root"
+    raw_port = p.get("port")
     try:
-        port = int(p.get("port") or 22)
+        port = int(raw_port) if raw_port is not None else 22
     except (TypeError, ValueError):
         return _error("'port' must be an integer")
+    raw_timeout = p.get("timeout")
     try:
-        timeout = int(p.get("timeout") or DEFAULT_TIMEOUT_SECONDS)
+        timeout = (
+            int(raw_timeout)
+            if raw_timeout is not None
+            else DEFAULT_TIMEOUT_SECONDS
+        )
     except (TypeError, ValueError):
         return _error("'timeout' must be an integer")
     if timeout <= 0:
