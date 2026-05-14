@@ -9,6 +9,7 @@ from .account import register_account_tools
 from .client import TOKEN_ENV_VAR, aclose_client
 from .droplets import register_droplet_tools
 from .networking import register_networking_tools
+from .ssh import register_ssh_tools
 
 __all__ = [
     "TOKEN_ENV_VAR",
@@ -22,3 +23,4 @@ def register_digitalocean(mcp) -> None:
     register_droplet_tools(mcp)
     register_networking_tools(mcp)
     register_account_tools(mcp)
+    register_ssh_tools(mcp)
