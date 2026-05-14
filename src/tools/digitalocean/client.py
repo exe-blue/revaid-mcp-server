@@ -21,6 +21,7 @@ logger = logging.getLogger("revaid-mcp.do")
 DO_API_BASE = "https://api.digitalocean.com/v2"
 DEFAULT_TIMEOUT = 30.0
 TOKEN_ENV_VAR = "DIGITALOCEAN_API_TOKEN"
+_DO_API_ERROR_MSG = "DigitalOcean API error"
 
 # Single-process client. httpx.AsyncClient is safe to share across coroutines.
 _client: Optional[httpx.AsyncClient] = None
@@ -32,7 +33,7 @@ class DOError(Exception):
 
     def __init__(self, payload: dict):
         self.payload = payload
-        super().__init__(payload.get("message", "DigitalOcean API error"))
+        super().__init__(payload.get("message", _DO_API_ERROR_MSG))
 
 
 def _require_token() -> str:
@@ -126,7 +127,7 @@ def _format_error(resp: httpx.Response) -> dict:
     payload: dict = {
         "error": True,
         "status_code": resp.status_code,
-        "message": resp.reason_phrase or "DigitalOcean API error",
+        "message": resp.reason_phrase or _DO_API_ERROR_MSG,
         "request_id": request_id,
         "do_error_id": None,
     }
@@ -258,7 +259,7 @@ async def resolve_droplet_ip(droplet_id: int, token: str) -> str:
     """
     payload = await _do_get(f"/droplets/{droplet_id}", token)
     if payload.get("error"):
-        raise RuntimeError(payload.get("message") or "DigitalOcean API error")
+        raise RuntimeError(payload.get("message") or _DO_API_ERROR_MSG)
     droplet = payload.get("droplet")
     if not isinstance(droplet, dict):
         raise ValueError(f"droplet {droplet_id} not found")

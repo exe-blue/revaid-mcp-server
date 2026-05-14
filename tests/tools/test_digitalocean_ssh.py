@@ -20,6 +20,14 @@ import pytest
 # the module guards the import and exposes _ASYNCSSH_AVAILABLE for tests.
 from src.tools.digitalocean import ssh as ssh_module
 
+# Reserved documentation / placeholder IPs used purely as test fixtures.
+# Centralised here so the literals appear once and the test-only intent
+# is unambiguous.
+_ALLOWED_HOST = "1.2.3.4"  # NOSONAR
+_ALLOWED_HOST_2 = "5.6.7.8"  # NOSONAR
+_DENIED_HOST = "8.8.8.8"  # NOSONAR
+_RESOLVED_HOST = "9.9.9.9"  # NOSONAR
+
 
 # ---- helpers ---------------------------------------------------------------
 
@@ -67,7 +75,7 @@ def stub_asyncssh(monkeypatch):
 def env_minimal(monkeypatch):
     """Minimum env to make do_ssh_exec produce a call (allowlist + key)."""
     monkeypatch.setenv("DO_SSH_PRIVATE_KEY_PEM", "fake-pem-body")
-    monkeypatch.setenv("DO_SSH_ALLOWED_HOSTS", "1.2.3.4, 5.6.7.8")
+    monkeypatch.setenv("DO_SSH_ALLOWED_HOSTS", f"{_ALLOWED_HOST}, {_ALLOWED_HOST_2}")
     monkeypatch.setenv("DO_SSH_TOFU", "true")  # avoid known_hosts file check
     # ensure no leak from prior tests
     monkeypatch.delenv("DO_SSH_PRIVATE_KEY_PATH", raising=False)
@@ -83,19 +91,19 @@ async def test_command_success(stub_asyncssh, env_minimal):
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "echo hello",
     })
 
     assert result.get("error") is not True, result
     assert result["exit_code"] == 0
     assert "hello" in result["stdout"]
-    assert result["host"] == "1.2.3.4"
+    assert result["host"] == _ALLOWED_HOST
     assert result["stderr"] == ""
     assert result["stdout_truncated"] is False
     # connect was called with the right host/user
     kwargs = stub_asyncssh.connect.call_args.kwargs
-    assert kwargs["host"] == "1.2.3.4"
+    assert kwargs["host"] == _ALLOWED_HOST
     assert kwargs["username"] == "root"
     # the run command was executed
     conn.run.assert_awaited_once()
@@ -104,7 +112,7 @@ async def test_command_success(stub_asyncssh, env_minimal):
 @pytest.mark.asyncio
 async def test_host_not_in_allowlist(stub_asyncssh, env_minimal):
     result = await ssh_module.do_ssh_exec({
-        "host": "8.8.8.8",
+        "host": _DENIED_HOST,
         "command": "echo test",
     })
     assert result.get("error") is True
@@ -120,7 +128,7 @@ async def test_allowlist_empty_denies_all(stub_asyncssh, monkeypatch):
     monkeypatch.delenv("DO_SSH_ALLOWED_HOSTS", raising=False)
 
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "echo test",
     })
     assert result.get("error") is True
@@ -130,12 +138,12 @@ async def test_allowlist_empty_denies_all(stub_asyncssh, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_missing_key_denies(stub_asyncssh, monkeypatch):
-    monkeypatch.setenv("DO_SSH_ALLOWED_HOSTS", "1.2.3.4")
+    monkeypatch.setenv("DO_SSH_ALLOWED_HOSTS", _ALLOWED_HOST)
     monkeypatch.delenv("DO_SSH_PRIVATE_KEY_PEM", raising=False)
     monkeypatch.delenv("DO_SSH_PRIVATE_KEY_PATH", raising=False)
 
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "echo test",
     })
     assert result.get("error") is True
@@ -146,7 +154,7 @@ async def test_missing_key_denies(stub_asyncssh, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_command_or_script_required(stub_asyncssh, env_minimal):
-    result = await ssh_module.do_ssh_exec({"host": "1.2.3.4"})
+    result = await ssh_module.do_ssh_exec({"host": _ALLOWED_HOST})
     assert result.get("error") is True
     assert "command" in result["message"].lower()
 
@@ -154,7 +162,7 @@ async def test_command_or_script_required(stub_asyncssh, env_minimal):
 @pytest.mark.asyncio
 async def test_command_and_script_conflict(stub_asyncssh, env_minimal):
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "echo a",
         "script": "echo b",
     })
@@ -166,7 +174,7 @@ async def test_command_and_script_conflict(stub_asyncssh, env_minimal):
 async def test_command_size_limit(stub_asyncssh, env_minimal):
     huge = "x" * (ssh_module.MAX_COMMAND_BYTES + 1)
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": huge,
     })
     assert result.get("error") is True
@@ -181,7 +189,7 @@ async def test_timeout(stub_asyncssh, env_minimal):
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "sleep 9999",
         "timeout": 1,
     })
@@ -198,7 +206,7 @@ async def test_timeout_clamped_to_max(stub_asyncssh, env_minimal):
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "true",
         "timeout": 99999,  # asks for huge, must clamp to 600
     })
@@ -214,7 +222,7 @@ async def test_script_upload_cleanup_on_success(stub_asyncssh, env_minimal):
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "script": "#!/bin/bash\necho done\n",
     })
     assert result["exit_code"] == 0
@@ -255,7 +263,7 @@ async def test_script_cleanup_on_exec_failure(stub_asyncssh, env_minimal):
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "script": "echo hi",
     })
     # The exec raised so we report a structured error, but cleanup ran.
@@ -266,11 +274,11 @@ async def test_script_cleanup_on_exec_failure(stub_asyncssh, env_minimal):
 @pytest.mark.asyncio
 async def test_droplet_id_resolves_to_ip(stub_asyncssh, env_minimal, monkeypatch):
     monkeypatch.setenv("DIGITALOCEAN_API_TOKEN", "fake-token")
-    resolver = AsyncMock(return_value="1.2.3.4")
+    resolver = AsyncMock(return_value=_ALLOWED_HOST)
     monkeypatch.setattr(ssh_module, "resolve_droplet_ip", resolver)
 
     run_result = MagicMock(exit_status=0, stdout="ok\n", stderr="")
-    conn_ctx, conn = _make_conn_ctx(run_result=run_result)
+    conn_ctx, _conn = _make_conn_ctx(run_result=run_result)
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     result = await ssh_module.do_ssh_exec({
@@ -279,15 +287,15 @@ async def test_droplet_id_resolves_to_ip(stub_asyncssh, env_minimal, monkeypatch
     })
     assert result.get("error") is not True, result
     resolver.assert_awaited_once_with(570463287, "fake-token")
-    assert stub_asyncssh.connect.call_args.kwargs["host"] == "1.2.3.4"
-    assert result["host"] == "1.2.3.4"
+    assert stub_asyncssh.connect.call_args.kwargs["host"] == _ALLOWED_HOST
+    assert result["host"] == _ALLOWED_HOST
 
 
 @pytest.mark.asyncio
 async def test_droplet_id_resolved_ip_not_in_allowlist(stub_asyncssh, env_minimal, monkeypatch):
     monkeypatch.setenv("DIGITALOCEAN_API_TOKEN", "fake-token")
-    # Resolver returns an IP that is NOT in DO_SSH_ALLOWED_HOSTS (1.2.3.4, 5.6.7.8)
-    monkeypatch.setattr(ssh_module, "resolve_droplet_ip", AsyncMock(return_value="9.9.9.9"))
+    # Resolver returns an IP that is NOT in the test allowlist.
+    monkeypatch.setattr(ssh_module, "resolve_droplet_ip", AsyncMock(return_value=_RESOLVED_HOST))
 
     result = await ssh_module.do_ssh_exec({
         "droplet_id": 1,
@@ -295,13 +303,13 @@ async def test_droplet_id_resolved_ip_not_in_allowlist(stub_asyncssh, env_minima
     })
     assert result.get("error") is True
     assert result["status_code"] == 403
-    assert "9.9.9.9" in result["message"]
+    assert _RESOLVED_HOST in result["message"]
 
 
 @pytest.mark.asyncio
 async def test_host_and_droplet_id_conflict(stub_asyncssh, env_minimal):
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "droplet_id": 1,
         "command": "echo a",
     })
@@ -313,11 +321,11 @@ async def test_host_and_droplet_id_conflict(stub_asyncssh, env_minimal):
 async def test_output_truncation(stub_asyncssh, env_minimal):
     big = "x" * (ssh_module.MAX_OUTPUT_BYTES + 100)
     run_result = MagicMock(exit_status=0, stdout=big, stderr="")
-    conn_ctx, conn = _make_conn_ctx(run_result=run_result)
+    conn_ctx, _conn = _make_conn_ctx(run_result=run_result)
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     result = await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "cat big",
     })
     assert result["stdout_truncated"] is True
@@ -332,7 +340,7 @@ async def test_env_and_cwd_wrap(stub_asyncssh, env_minimal):
     stub_asyncssh.connect = MagicMock(return_value=conn_ctx)
 
     await ssh_module.do_ssh_exec({
-        "host": "1.2.3.4",
+        "host": _ALLOWED_HOST,
         "command": "echo $FOO",
         "env": {"FOO": "bar baz", "BAD KEY": "skipped"},
         "cwd": "/var/log",

@@ -156,6 +156,100 @@ def _audit(entry: dict) -> None:
     )
 
 
+def _validate_endpoint(p: dict) -> tuple[Optional[dict], Any, Optional[str]]:
+    """Resolve droplet_id/host. Returns (error_or_None, droplet_id, host)."""
+    droplet_id = p.get("droplet_id")
+    host = (p.get("host") or "").strip() or None
+    if not droplet_id and not host:
+        return _error("either 'droplet_id' or 'host' is required"), None, None
+    if droplet_id and host:
+        return _error("provide only one of 'droplet_id' or 'host', not both"), None, None
+    return None, droplet_id, host
+
+
+def _validate_body(p: dict) -> tuple[Optional[dict], Optional[str], Optional[str]]:
+    """Resolve command/script. Returns (error_or_None, command, script)."""
+    command = p.get("command")
+    script = p.get("script")
+    if command and script:
+        return _error("provide only one of 'command' or 'script', not both"), None, None
+    if not command and not script:
+        return _error("either 'command' or 'script' is required"), None, None
+    body = command if command is not None else script
+    if not isinstance(body, str):
+        return _error("'command'/'script' must be a string"), None, None
+    if len(body.encode("utf-8")) > MAX_COMMAND_BYTES:
+        return (
+            _error(f"command/script exceeds {MAX_COMMAND_BYTES} bytes (10 KB limit)"),
+            None,
+            None,
+        )
+    return None, command, script
+
+
+def _validate_runtime(p: dict) -> tuple[Optional[dict], dict]:
+    """Resolve user/port/timeout/env/cwd."""
+    user = (p.get("user") or "root").strip() or "root"
+    try:
+        port = int(p.get("port") or 22)
+    except (TypeError, ValueError):
+        return _error("'port' must be an integer"), {}
+    try:
+        timeout = int(p.get("timeout") or DEFAULT_TIMEOUT_SECONDS)
+    except (TypeError, ValueError):
+        return _error("'timeout' must be an integer"), {}
+    if timeout <= 0:
+        return _error("'timeout' must be positive"), {}
+    if timeout > MAX_TIMEOUT_SECONDS:
+        timeout = MAX_TIMEOUT_SECONDS
+    env = p.get("env") or {}
+    if not isinstance(env, dict):
+        return _error("'env' must be an object"), {}
+    cwd = p.get("cwd")
+    if cwd is not None and not isinstance(cwd, str):
+        return _error("'cwd' must be a string"), {}
+    return None, {"user": user, "port": port, "timeout": timeout, "env": env, "cwd": cwd}
+
+
+async def _resolve_target_host(
+    droplet_id: Any, host: Optional[str], allowed: list[str]
+) -> tuple[Optional[dict], Optional[str]]:
+    """Resolve droplet_id → IP (if any), then enforce the allowlist."""
+    if droplet_id is not None:
+        try:
+            token = _require_token()
+        except RuntimeError as exc:
+            return _error(str(exc), status_code=400), None
+        try:
+            host = await resolve_droplet_ip(int(droplet_id), token)
+        except (RuntimeError, ValueError) as exc:
+            return _error(f"failed to resolve droplet {droplet_id}: {exc}"), None
+    if host not in allowed:
+        return (
+            _error(f"host {host} not in {ENV_ALLOWED_HOSTS}", status_code=403),
+            None,
+        )
+    return None, host
+
+
+def _load_key_or_error() -> tuple[Optional[dict], Any]:
+    """Load private key; on failure return (error_dict, None)."""
+    try:
+        return None, _load_private_key()
+    except RuntimeError as exc:
+        return _error(str(exc), status_code=503), None
+    except FileNotFoundError as exc:
+        return _error(str(exc), status_code=500), None
+    except Exception as exc:
+        # logger.exception is safe here: asyncssh KeyImportError messages
+        # describe parse failures and never echo private-key bytes.
+        logger.exception("Failed to load SSH key (%s)", type(exc).__name__)
+        return (
+            _error(f"failed to load SSH key: {type(exc).__name__}", status_code=500),
+            None,
+        )
+
+
 async def do_ssh_exec(params: dict) -> dict:
     """Execute a command or upload-and-run a script on a droplet via SSH.
 
@@ -185,49 +279,15 @@ async def do_ssh_exec(params: dict) -> dict:
 
     p = params or {}
 
-    droplet_id = p.get("droplet_id")
-    host = (p.get("host") or "").strip() or None
-    if not droplet_id and not host:
-        return _error("either 'droplet_id' or 'host' is required")
-    if droplet_id and host:
-        return _error("provide only one of 'droplet_id' or 'host', not both")
-
-    command = p.get("command")
-    script = p.get("script")
-    if command and script:
-        return _error("provide only one of 'command' or 'script', not both")
-    if not command and not script:
-        return _error("either 'command' or 'script' is required")
-
-    body = command if command is not None else script
-    if not isinstance(body, str):
-        return _error("'command'/'script' must be a string")
-    if len(body.encode("utf-8")) > MAX_COMMAND_BYTES:
-        return _error(
-            f"command/script exceeds {MAX_COMMAND_BYTES} bytes "
-            "(10 KB limit)"
-        )
-
-    user = (p.get("user") or "root").strip() or "root"
-    try:
-        port = int(p.get("port") or 22)
-    except (TypeError, ValueError):
-        return _error("'port' must be an integer")
-    try:
-        timeout = int(p.get("timeout") or DEFAULT_TIMEOUT_SECONDS)
-    except (TypeError, ValueError):
-        return _error("'timeout' must be an integer")
-    if timeout <= 0:
-        return _error("'timeout' must be positive")
-    if timeout > MAX_TIMEOUT_SECONDS:
-        timeout = MAX_TIMEOUT_SECONDS
-
-    env = p.get("env") or {}
-    if not isinstance(env, dict):
-        return _error("'env' must be an object")
-    cwd = p.get("cwd")
-    if cwd is not None and not isinstance(cwd, str):
-        return _error("'cwd' must be a string")
+    err, droplet_id, host = _validate_endpoint(p)
+    if err:
+        return err
+    err, command, script = _validate_body(p)
+    if err:
+        return err
+    err, runtime = _validate_runtime(p)
+    if err:
+        return err
 
     allowed = _parse_allowed_hosts()
     if not allowed:
@@ -238,51 +298,25 @@ async def do_ssh_exec(params: dict) -> dict:
         )
 
     try:
-        if droplet_id is not None:
-            try:
-                token = _require_token()
-            except RuntimeError as exc:
-                return _error(str(exc), status_code=400)
-            try:
-                host = await resolve_droplet_ip(int(droplet_id), token)
-            except (RuntimeError, ValueError) as exc:
-                return _error(
-                    f"failed to resolve droplet {droplet_id}: {exc}"
-                )
-
-        if host not in allowed:
-            return _error(
-                f"host {host} not in {ENV_ALLOWED_HOSTS}",
-                status_code=403,
-            )
-
-        try:
-            private_key = _load_private_key()
-        except RuntimeError as exc:
-            return _error(str(exc), status_code=503)
-        except FileNotFoundError as exc:
-            return _error(str(exc), status_code=500)
-        except Exception as exc:
-            logger.error("Failed to load SSH key: %s", type(exc).__name__)
-            return _error(
-                f"failed to load SSH key: {type(exc).__name__}",
-                status_code=500,
-            )
-
-        known_hosts = _resolve_known_hosts()
+        err, host = await _resolve_target_host(droplet_id, host, allowed)
+        if err:
+            return err
+        err, private_key = _load_key_or_error()
+        if err:
+            return err
 
         async with _ssh_semaphore:
             return await _execute_on_host(
                 host=host,
-                port=port,
-                user=user,
+                port=runtime["port"],
+                user=runtime["user"],
                 private_key=private_key,
-                known_hosts=known_hosts,
+                known_hosts=_resolve_known_hosts(),
                 command=command,
                 script=script,
-                env=env,
-                cwd=cwd,
-                timeout=timeout,
+                env=runtime["env"],
+                cwd=runtime["cwd"],
+                timeout=runtime["timeout"],
             )
     except Exception as exc:
         return _safe_call_error("do_ssh_exec", exc)
@@ -318,7 +352,10 @@ async def _execute_on_host(
         async with asyncssh.connect(**conn_kwargs) as conn:
             if command is not None:
                 wrapped = _wrap_with_env_cwd(command, env, cwd)
-                result = await conn.run(wrapped, timeout=timeout, check=False)
+                # NOSONAR S7483: asyncssh.SSHClientConnection.run owns its
+                # own `timeout` kwarg — wrapping with asyncio.timeout() would
+                # cancel the channel rather than close it cleanly.
+                result = await conn.run(wrapped, timeout=timeout, check=False)  # NOSONAR
                 exit_code = (
                     result.exit_status if result.exit_status is not None else -1
                 )
@@ -402,13 +439,18 @@ async def _execute_on_host(
 
 async def _run_script(conn: Any, script_body: str, *, timeout: int) -> tuple[int, str, str]:
     """Upload script via SFTP, execute, and remove (best-effort cleanup)."""
-    remote_path = f"/tmp/revaid_{uuid.uuid4().hex}.sh"
+    # NOSONAR S5443: this path lives on the REMOTE droplet, not on the
+    # MCP host. The name is randomized via uuid4 and chmod 700 is applied,
+    # so other droplet users cannot read or hijack the file before it is
+    # removed in the finally block.
+    remote_path = f"/tmp/revaid_{uuid.uuid4().hex}.sh"  # NOSONAR
     try:
         async with conn.start_sftp_client() as sftp:
             async with sftp.open(remote_path, "w") as f:
                 await f.write(script_body)
             await sftp.chmod(remote_path, 0o700)
-        result = await conn.run(
+        # NOSONAR S7483: asyncssh-native timeout, see _execute_on_host.
+        result = await conn.run(  # NOSONAR
             f"bash {remote_path}", timeout=timeout, check=False
         )
         exit_code = (
