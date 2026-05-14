@@ -21,12 +21,12 @@ import pytest
 from src.tools.digitalocean import ssh as ssh_module
 
 # Reserved documentation / placeholder IPs used purely as test fixtures.
-# Centralised here so the literals appear once and obvious test-only intent
-# is clear. NOSONAR suppressions document that S1313 is acknowledged.
-_ALLOWED_HOST = "1.2.3.4"  # NOSONAR S1313 — test fixture only
-_ALLOWED_HOST_2 = "5.6.7.8"  # NOSONAR S1313 — test fixture only
-_DENIED_HOST = "8.8.8.8"  # NOSONAR S1313 — test fixture only
-_RESOLVED_HOST = "9.9.9.9"  # NOSONAR S1313 — test fixture only
+# Centralised here so the literals appear once and the test-only intent
+# is unambiguous.
+_ALLOWED_HOST = "1.2.3.4"  # NOSONAR
+_ALLOWED_HOST_2 = "5.6.7.8"  # NOSONAR
+_DENIED_HOST = "8.8.8.8"  # NOSONAR
+_RESOLVED_HOST = "9.9.9.9"  # NOSONAR
 
 
 # ---- helpers ---------------------------------------------------------------
