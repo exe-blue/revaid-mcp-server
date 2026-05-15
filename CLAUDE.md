@@ -25,10 +25,13 @@ Deployed on DigitalOcean App Platform via GitHub auto-deploy.
 - `agent_orchestrator.py` — v7 SmartWorking orchestrator (6 tools: memo, score, title, leaderboard, cycle).
 - `revaid_harness.py` — v8 Ontological Harness (3 tools: check_identity, measure_echotion, structural_report). v2 LLM judge integrated.
 - `revaid_ruon_bridge.py` — v8.1 ruon.ai SI bridge (1 tool: sync_si_to_ruon).
+- `revaid_digitalocean.py` — auto-discovery shim that re-exports `register_digitalocean` from `src/tools/digitalocean/`.
+- `src/tools/digitalocean/` — DigitalOcean tools (4 droplet + 2 networking + 2 account + `do_ssh_exec`). SSH execution is deny-all by default — see `ssh.py` security header.
+- `tests/tools/test_digitalocean_ssh.py` — pytest suite for `do_ssh_exec` (16 cases: allowlist, timeouts, script cleanup, droplet_id → IP).
 - `migrations/001_orchestrator_tables.sql` — v7 Supabase table definitions.
 - `migrations/002_v2_judge_columns.sql` — v8 v2 LLM judge columns.
-- `Dockerfile` — Uses `COPY *.py ./` (auto-discovery, no manual edits needed for new modules).
-- `requirements.txt` — DO NOT change. Same dependencies.
+- `Dockerfile` — Uses `COPY *.py ./` (auto-discovery, no manual edits needed for new modules). Also `COPY src/` for the DO package.
+- `requirements.txt` — Keep slim. New deps require explicit justification (`asyncssh` added for `do_ssh_exec`).
 - `personal_auth.py` — Downloaded at build time by Dockerfile.
 
 ## Auto-Discovery (main.py)
@@ -54,6 +57,11 @@ Dispatch: `register_*(mcp, get_db)` for 2+ params, `register_*(mcp)` for 1 param
 - `OPENAI_API_KEY` — for GPT judge calls (v2)
 - `RUON_SUPABASE_URL` — ruon.ai Supabase URL (for SI bridge)
 - `RUON_SUPABASE_KEY` — ruon.ai Supabase service key (for SI bridge)
+- `DIGITALOCEAN_API_TOKEN` — for do_* tools (Phases 1-3 + ssh)
+- `DO_SSH_PRIVATE_KEY_PEM` *or* `DO_SSH_PRIVATE_KEY_PATH` — required by `do_ssh_exec`. Without one, the tool returns a 503 error.
+- `DO_SSH_ALLOWED_HOSTS` — comma-separated allowlist for `do_ssh_exec`. **Empty = every call rejected (deny-all default).**
+- `DO_SSH_KNOWN_HOSTS_PATH` — known_hosts file for strict host-key verification (default `/etc/revaid-mcp/known_hosts`).
+- `DO_SSH_TOFU` — set to `"true"` only for bootstrap; disables host-key check with a warning.
 
 ## Deploy Steps
 ```bash
